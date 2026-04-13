@@ -1,0 +1,15 @@
+[package]
+name = "pos-system"
+version = "0.1.0"
+description = "A POS System"
+authors = ["you"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = "2.0.0"
+
+[dependencies]
+tauri = { version = "2.0.0", features = [] }
+tauri-plugin-sql = { version = "2.0.0", features = ["sqlite"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

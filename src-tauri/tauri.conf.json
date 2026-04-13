@@ -1,0 +1,32 @@
+{
+  "productName": "POS System",
+  "version": "0.1.0",
+  "identifier": "com.pos.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:3000",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "POS System",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "sql": {
+      "preload": [
+        "sqlite:pos.db"
+      ]
+    }
+  }
+}
