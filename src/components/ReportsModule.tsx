@@ -1,320 +1,1192 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ComposedChart, Area, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell } from 'recharts';
-import { format } from 'date-fns';
-import { id } from 'date-fns/locale';
+import { ComposedChart, Area, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, LineChart, Line } from 'recharts';
+import { TrendingUp, TrendingDown, DollarSign, ShoppingCart, Package, CreditCard, ArrowUpRight, ArrowDownRight, Calendar, Filter, Users, UserCircle, Layers, Archive, Award, AlertTriangle, Zap, Boxes } from 'lucide-react';
+import { format, subDays, startOfDay, endOfDay, isWithinInterval } from 'date-fns';
+import { id as idLocale } from 'date-fns/locale';
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
+const PALETTE = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+
+const fmt = (n: number) => 'Rp ' + (n || 0).toLocaleString('id-ID');
+
+type DateRange = '7d' | '30d' | '90d' | 'all' | 'custom';
 
 export function ReportsModule() {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [moneyFlow, setMoneyFlow] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [range, setRange] = useState<DateRange>('30d');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [activeTab, setActiveTab] = useState('overview');
 
   useEffect(() => {
-    fetch('/api/transactions').then(res => res.json()).then(setTransactions);
-    fetch('/api/money-flow').then(res => res.json()).then(setMoneyFlow);
+    invoke('get_transactions').then(setTransactions).catch(() => {});
+    invoke('get_money_flow').then(setMoneyFlow).catch(() => {});
+    invoke('get_products').then(setProducts).catch(() => {});
+    invoke('get_customers').then(setCustomers).catch(() => {});
   }, []);
 
-  const totalSales = transactions.reduce((sum, t) => sum + t.total, 0);
-  const totalTransactions = transactions.length;
+  // Filter by date range
+  const filtered = useMemo(() => {
+    if (range === 'all') return transactions;
+    let from: Date, to: Date;
+    if (range === 'custom') {
+      if (!customFrom || !customTo) return transactions;
+      from = startOfDay(new Date(customFrom));
+      to = endOfDay(new Date(customTo));
+    } else {
+      const days = range === '7d' ? 7 : range === '30d' ? 30 : 90;
+      from = startOfDay(subDays(new Date(), days));
+      to = endOfDay(new Date());
+    }
+    return transactions.filter(t => {
+      const d = new Date(t.date);
+      return isWithinInterval(d, { start: from, end: to });
+    });
+  }, [transactions, range, customFrom, customTo]);
 
-  // 1. Transaction Report Data
-  const dailyDataMap = transactions.reduce((acc, t) => {
-    const date = format(new Date(t.date), 'yyyy-MM-dd');
-    if (!acc[date]) acc[date] = { date, omset: 0, count: 0 };
-    acc[date].omset += t.total;
-    acc[date].count += 1;
+  const filteredFlow = useMemo(() => {
+    if (range === 'all') return moneyFlow;
+    let from: Date, to: Date;
+    if (range === 'custom') {
+      if (!customFrom || !customTo) return moneyFlow;
+      from = startOfDay(new Date(customFrom));
+      to = endOfDay(new Date(customTo));
+    } else {
+      const days = range === '7d' ? 7 : range === '30d' ? 30 : 90;
+      from = startOfDay(subDays(new Date(), days));
+      to = endOfDay(new Date());
+    }
+    return moneyFlow.filter(f => {
+      const d = new Date(f.date);
+      return isWithinInterval(d, { start: from, end: to });
+    });
+  }, [moneyFlow, range, customFrom, customTo]);
+
+  // KPIs
+  const totalSales = filtered.reduce((s, t) => s + t.total, 0);
+  const totalTx = filtered.length;
+  const avgTx = totalTx > 0 ? Math.round(totalSales / totalTx) : 0;
+  const totalItemsSold = filtered.reduce((s, t) => s + (t.items || []).reduce((a: number, i: any) => a + i.quantity, 0), 0);
+
+  // Daily chart
+  const dailyMap = filtered.reduce((acc: any, t: any) => {
+    const d = format(new Date(t.date), 'yyyy-MM-dd');
+    if (!acc[d]) acc[d] = { date: d, omset: 0, count: 0 };
+    acc[d].omset += t.total;
+    acc[d].count += 1;
     return acc;
   }, {});
-  const chartData = Object.values(dailyDataMap).sort((a: any, b: any) => a.date.localeCompare(b.date));
+  const dailyChart = Object.values(dailyMap).sort((a: any, b: any) => a.date.localeCompare(b.date));
 
-  // 2. Product Sales Data
-  const productSalesMap = transactions.reduce((acc, t) => {
-    t.items.forEach((item: any) => {
-      if (!acc[item.name]) acc[item.name] = { name: item.name, quantity: 0, total: 0 };
-      acc[item.name].quantity += item.quantity;
-      acc[item.name].total += item.price * item.quantity;
+  // Product rankings
+  const productMap = filtered.reduce((acc: any, t: any) => {
+    (t.items || []).forEach((it: any) => {
+      if (!acc[it.name]) acc[it.name] = { name: it.name, qty: 0, revenue: 0 };
+      acc[it.name].qty += it.quantity;
+      acc[it.name].revenue += (it.price || 0) * it.quantity;
     });
     return acc;
   }, {});
-  const productData = Object.values(productSalesMap).sort((a: any, b: any) => b.total - a.total);
+  const topProducts = Object.values(productMap).sort((a: any, b: any) => b.revenue - a.revenue);
 
-  // 3. Payment Method Data
-  const paymentSalesMap = transactions.reduce((acc, t) => {
-    if (!acc[t.paymentMethod]) acc[t.paymentMethod] = { method: t.paymentMethod, total: 0, count: 0 };
-    acc[t.paymentMethod].total += t.total;
+  // Payment methods
+  const payMap = filtered.reduce((acc: any, t: any) => {
+    if (!acc[t.paymentMethod]) acc[t.paymentMethod] = { name: t.paymentMethod, value: 0, count: 0 };
+    acc[t.paymentMethod].value += t.total;
     acc[t.paymentMethod].count += 1;
     return acc;
   }, {});
-  const paymentData = Object.values(paymentSalesMap);
+  const paymentData = Object.values(payMap);
 
-  // 4. Profit/Loss Data
-  let totalHargaJual = 0;
-  let totalHargaPokok = 0;
-  transactions.forEach(t => {
-    t.items.forEach((item: any) => {
-      totalHargaJual += item.price * item.quantity;
-      totalHargaPokok += (item.costPrice || 0) * item.quantity;
-    });
+  // Hourly heatmap
+  const hourly = Array.from({ length: 24 }, (_, i) => ({ hour: `${String(i).padStart(2, '0')}:00`, count: 0, total: 0 }));
+  filtered.forEach(t => {
+    const h = new Date(t.date).getHours();
+    hourly[h].count += 1;
+    hourly[h].total += t.total;
   });
-  const totalLabaRugiSales = totalHargaJual - totalHargaPokok;
 
-  const totalPemasukanLain = moneyFlow.filter(f => f.type === 'Pemasukan' && f.category !== 'Penjualan').reduce((sum, f) => sum + f.amount, 0);
-  const totalPengeluaran = moneyFlow.filter(f => f.type === 'Pengeluaran').reduce((sum, f) => sum + f.amount, 0);
-  const labaBersih = totalLabaRugiSales + totalPemasukanLain - totalPengeluaran;
+  // P&L
+  let totalCostOfGoods = 0, totalRevenue = 0;
+  filtered.forEach(t => (t.items || []).forEach((it: any) => {
+    totalRevenue += (it.price || 0) * it.quantity;
+    totalCostOfGoods += (it.costPrice || 0) * it.quantity;
+  }));
+  const totalTax = filtered.reduce((s, t) => s + (t.tax || 0), 0);
+  const totalServiceCharge = filtered.reduce((s, t) => s + (t.serviceCharge || 0), 0);
+  const totalPassThrough = totalTax + totalServiceCharge;
+  const totalGrossSales = totalRevenue + totalPassThrough;
+  const grossProfit = totalRevenue - totalCostOfGoods;
+  const otherIncome = filteredFlow.filter(f => f.type === 'Pemasukan' && f.category !== 'Penjualan').reduce((s, f) => s + f.amount, 0);
+  const totalExpenses = filteredFlow.filter(f => f.type === 'Pengeluaran').reduce((s, f) => s + f.amount, 0);
+  const netProfit = grossProfit + otherIncome - totalExpenses;
+  const margin = totalRevenue > 0 ? ((grossProfit / totalRevenue) * 100).toFixed(1) : '0';
+
+  // Expense breakdown
+  const expenseMap = filteredFlow.filter(f => f.type === 'Pengeluaran').reduce((acc: any, f: any) => {
+    const cat = f.category || 'Lainnya';
+    if (!acc[cat]) acc[cat] = { name: cat, value: 0 };
+    acc[cat].value += f.amount;
+    return acc;
+  }, {});
+  const expenseData = Object.values(expenseMap).sort((a: any, b: any) => b.value - a.value);
+
+  // ─── Category breakdown (revenue by product category) ───
+  const productLookup = useMemo(() => {
+    const m: Record<string, any> = {};
+    products.forEach((p: any) => { if (p.name) m[p.name] = p; });
+    return m;
+  }, [products]);
+
+  const categoryBreakdown = useMemo(() => {
+    const acc: Record<string, { name: string; qty: number; revenue: number; products: Set<string>; cogs: number }> = {};
+    filtered.forEach(t => {
+      (t.items || []).forEach((it: any) => {
+        const product = productLookup[it.name];
+        const cat = product?.category || 'Lain-lain';
+        if (!acc[cat]) acc[cat] = { name: cat, qty: 0, revenue: 0, products: new Set(), cogs: 0 };
+        acc[cat].qty += it.quantity;
+        acc[cat].revenue += (it.price || 0) * it.quantity;
+        acc[cat].cogs += (product?.costPrice || 0) * it.quantity;
+        acc[cat].products.add(it.name);
+      });
+    });
+    return Object.values(acc)
+      .map(c => ({ ...c, productCount: c.products.size, profit: c.revenue - c.cogs, margin: c.revenue > 0 ? ((c.revenue - c.cogs) / c.revenue) * 100 : 0 }))
+      .sort((a, b) => b.revenue - a.revenue);
+  }, [filtered, productLookup]);
+  const totalCategoryRevenue = categoryBreakdown.reduce((s, c) => s + c.revenue, 0);
+
+  // ─── Cashier performance ───
+  const cashierBreakdown = useMemo(() => {
+    const acc: Record<string, { name: string; txCount: number; revenue: number; items: number }> = {};
+    filtered.forEach(t => {
+      const name = t.cashier || 'Tidak diketahui';
+      if (!acc[name]) acc[name] = { name, txCount: 0, revenue: 0, items: 0 };
+      acc[name].txCount += 1;
+      acc[name].revenue += t.total || 0;
+      acc[name].items += (t.items || []).reduce((s: number, i: any) => s + i.quantity, 0);
+    });
+    return Object.values(acc)
+      .map(c => ({ ...c, avgTicket: c.txCount > 0 ? c.revenue / c.txCount : 0 }))
+      .sort((a, b) => b.revenue - a.revenue);
+  }, [filtered]);
+
+  // ─── Customer analytics ───
+  const WALK_IN_NAMES = new Set(['Walk-In', 'Walk-In Customer', '']);
+  const customerBreakdown = useMemo(() => {
+    const acc: Record<string, { name: string; txCount: number; revenue: number; items: number; firstDate: string; lastDate: string }> = {};
+    filtered.forEach(t => {
+      const name = t.customer || 'Walk-In';
+      if (!acc[name]) acc[name] = { name, txCount: 0, revenue: 0, items: 0, firstDate: t.date, lastDate: t.date };
+      acc[name].txCount += 1;
+      acc[name].revenue += t.total || 0;
+      acc[name].items += (t.items || []).reduce((s: number, i: any) => s + i.quantity, 0);
+      if (new Date(t.date) > new Date(acc[name].lastDate)) acc[name].lastDate = t.date;
+      if (new Date(t.date) < new Date(acc[name].firstDate)) acc[name].firstDate = t.date;
+    });
+    return Object.values(acc).sort((a, b) => b.revenue - a.revenue);
+  }, [filtered]);
+
+  const identifiedCustomers = customerBreakdown.filter(c => !WALK_IN_NAMES.has(c.name));
+  const uniqueCustomerCount = identifiedCustomers.length;
+  const returningCount = identifiedCustomers.filter(c => c.txCount > 1).length;
+  const returningRate = uniqueCustomerCount > 0 ? (returningCount / uniqueCustomerCount * 100).toFixed(1) : '0';
+  const walkInStats = customerBreakdown.find(c => WALK_IN_NAMES.has(c.name));
+  const avgSpendPerCustomer = uniqueCustomerCount > 0
+    ? identifiedCustomers.reduce((s, c) => s + c.revenue, 0) / uniqueCustomerCount
+    : 0;
+
+  const frequencyBuckets = [
+    { range: '1×', count: identifiedCustomers.filter(c => c.txCount === 1).length },
+    { range: '2×', count: identifiedCustomers.filter(c => c.txCount === 2).length },
+    { range: '3–5×', count: identifiedCustomers.filter(c => c.txCount >= 3 && c.txCount <= 5).length },
+    { range: '6–10×', count: identifiedCustomers.filter(c => c.txCount >= 6 && c.txCount <= 10).length },
+    { range: '10×+', count: identifiedCustomers.filter(c => c.txCount > 10).length },
+  ];
+
+  // ─── Stock analytics ───
+  const daysInRange = useMemo(() => {
+    if (range === '7d') return 7;
+    if (range === '30d') return 30;
+    if (range === '90d') return 90;
+    if (filtered.length === 0) return 1;
+    const ds = filtered.map(t => new Date(t.date).getTime());
+    const span = (Math.max(...ds) - Math.min(...ds)) / 86400000;
+    return Math.max(1, span);
+  }, [range, filtered]);
+
+  const stockBreakdown = useMemo(() => {
+    const sold: Record<string, number> = {};
+    filtered.forEach(t => (t.items || []).forEach((it: any) => {
+      sold[it.name] = (sold[it.name] || 0) + it.quantity;
+    }));
+    return products.map((p: any) => {
+      const soldQty = sold[p.name] || 0;
+      const dailyRate = soldQty / daysInRange;
+      const stock = p.stock || 0;
+      const daysUntilOut = dailyRate > 0 ? Math.floor(stock / dailyRate) : null;
+      return {
+        id: p.id,
+        name: p.name,
+        category: p.category || 'Lain-lain',
+        stock,
+        costPrice: p.costPrice || 0,
+        price: p.price || 0,
+        soldQty,
+        dailyRate,
+        daysUntilOut,
+        stockValue: (p.costPrice || 0) * stock,
+        retailValue: (p.price || 0) * stock,
+      };
+    });
+  }, [products, filtered, daysInRange]);
+
+  const totalStockValue = stockBreakdown.reduce((s, p) => s + p.stockValue, 0);
+  const totalRetailValue = stockBreakdown.reduce((s, p) => s + p.retailValue, 0);
+  const outOfStockCount = stockBreakdown.filter(p => p.stock === 0).length;
+  const lowStockCount = stockBreakdown.filter(p => p.stock > 0 && p.stock <= 10).length;
+  const criticalStock = stockBreakdown
+    .filter(p => p.stock > 0 && p.daysUntilOut !== null && (p.daysUntilOut as number) <= 7)
+    .sort((a, b) => (a.daysUntilOut as number) - (b.daysUntilOut as number));
+  const slowMovers = stockBreakdown.filter(p => p.stock > 0 && p.soldQty === 0);
+  const fastMovers = [...stockBreakdown].filter(p => p.soldQty > 0).sort((a, b) => b.soldQty - a.soldQty).slice(0, 10);
+
+  const tabs = [
+    { id: 'overview', label: 'Ringkasan' },
+    { id: 'sales', label: 'Penjualan' },
+    { id: 'products', label: 'Produk' },
+    { id: 'categories', label: 'Kategori' },
+    { id: 'payments', label: 'Pembayaran' },
+    { id: 'cashiers', label: 'Kasir' },
+    { id: 'customers', label: 'Pelanggan' },
+    { id: 'stock', label: 'Stok' },
+    { id: 'profit', label: 'Laba Rugi' },
+  ];
+
+  const ranges: { id: DateRange; label: string }[] = [
+    { id: '7d', label: '7 Hari' },
+    { id: '30d', label: '30 Hari' },
+    { id: '90d', label: '90 Hari' },
+    { id: 'all', label: 'Semua' },
+    { id: 'custom', label: 'Custom' },
+  ];
 
   return (
-    <div className="p-8 space-y-6 overflow-y-auto h-full">
-      <h2 className="text-3xl font-bold text-slate-800">Laporan & Analitik</h2>
+    <div className="p-6 lg:p-8 space-y-6 overflow-y-auto h-full bg-muted/30">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h2 className="text-3xl font-extrabold text-foreground tracking-tight">Laporan & Analitik</h2>
+          <p className="text-sm text-muted-foreground mt-1">Insight bisnis real-time untuk keputusan yang lebih baik</p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex bg-card rounded-xl border border-border shadow-sm p-1 gap-0.5">
+            {ranges.map(r => (
+              <button
+                key={r.id}
+                onClick={() => setRange(r.id)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                  range === r.id
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          {range === 'custom' && (
+            <div className="flex items-center gap-1.5">
+              <Input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className="h-8 text-xs w-32" />
+              <span className="text-muted-foreground/70 text-xs">—</span>
+              <Input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className="h-8 text-xs w-32" />
+            </div>
+          )}
+        </div>
+      </div>
 
-      <Tabs defaultValue="transactions" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="transactions">Laporan Transaksi</TabsTrigger>
-          <TabsTrigger value="products">Penjualan Produk</TabsTrigger>
-          <TabsTrigger value="payments">Metode Pembayaran</TabsTrigger>
-          <TabsTrigger value="profit">Laba Rugi</TabsTrigger>
-        </TabsList>
+      {/* Tab navigation */}
+      <div className="flex flex-wrap gap-1 bg-card rounded-xl border border-border shadow-sm p-1">
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            className={`flex-1 min-w-[100px] px-3 py-2.5 text-sm font-medium rounded-lg transition-all ${
+              activeTab === t.id
+                ? 'bg-gradient-to-r from-indigo-500 to-violet-500 text-white shadow-md shadow-indigo-500/20'
+                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-        <TabsContent value="transactions" className="space-y-4 mt-4">
-          <div className="grid grid-cols-2 gap-4">
-            <Card className="bg-amber-400 text-amber-950">
-              <CardContent className="p-6 flex flex-col items-center justify-center">
-                <p className="text-sm font-medium opacity-80">Jumlah Omset</p>
-                <h3 className="text-3xl font-bold">Rp {totalSales.toLocaleString('id-ID')}</h3>
-                <p className="text-xs opacity-70 mt-1">Rata-rata: Rp {totalTransactions > 0 ? Math.round(totalSales / totalTransactions).toLocaleString('id-ID') : 0}</p>
-              </CardContent>
-            </Card>
-            <Card className="bg-cyan-600 text-white">
-              <CardContent className="p-6 flex flex-col items-center justify-center">
-                <p className="text-sm font-medium opacity-80">Jumlah Transaksi</p>
-                <h3 className="text-3xl font-bold">{totalTransactions}</h3>
-              </CardContent>
-            </Card>
+      {/* ═══════ OVERVIEW ═══════ */}
+      {activeTab === 'overview' && (
+        <div className="space-y-6">
+          {/* KPI Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <KPICard icon={DollarSign} label="Total Omset" value={fmt(totalSales)} color="indigo"
+              sub={`Rata-rata ${fmt(avgTx)} / transaksi`} trend={totalSales > 0 ? 'up' : undefined} />
+            <KPICard icon={ShoppingCart} label="Transaksi" value={totalTx.toLocaleString()} color="cyan"
+              sub={`${totalItemsSold} item terjual`} />
+            <KPICard icon={TrendingUp} label="Laba Kotor" value={fmt(grossProfit)} color="emerald"
+              sub={`Margin ${margin}%`} trend={grossProfit > 0 ? 'up' : grossProfit < 0 ? 'down' : undefined} />
+            <KPICard icon={TrendingDown} label="Pengeluaran" value={fmt(totalExpenses)} color="rose"
+              sub={expenseData.length > 0 ? `${expenseData.length} kategori` : 'Tidak ada'} />
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-center">Grafik Transaksi Harian</CardTitle>
+          {/* Revenue Chart */}
+          <Card className="border border-border shadow-sm bg-card overflow-hidden">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base font-semibold text-foreground/80">Tren Pendapatan Harian</CardTitle>
             </CardHeader>
-            <CardContent className="h-[300px] min-h-0 min-w-0">
+            <CardContent className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="date" tickFormatter={(tick) => format(new Date(tick), 'dd MMM', { locale: id })} />
-                  <YAxis yAxisId="left" orientation="left" stroke="#3b82f6" />
-                  <YAxis yAxisId="right" orientation="right" stroke="#f43f5e" />
-                  <Tooltip 
-                    labelFormatter={(label) => format(new Date(label), 'dd MMMM yyyy', { locale: id })}
-                    formatter={(value, name) => [name === 'omset' ? `Rp ${Number(value).toLocaleString('id-ID')}` : value, name === 'omset' ? 'Omset' : 'Transaksi']}
+                <ComposedChart data={dailyChart} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+                  <defs>
+                    <linearGradient id="omsetGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(148 163 184 / 0.25)" />
+                  <XAxis dataKey="date" tickFormatter={d => format(new Date(d), 'dd MMM', { locale: idLocale })} tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 13 }}
+                    labelFormatter={l => format(new Date(l), 'EEEE, dd MMMM yyyy', { locale: idLocale })}
+                    formatter={(v: any, n: string) => [n === 'omset' ? fmt(v) : v, n === 'omset' ? 'Omset' : 'Transaksi']}
                   />
-                  <Legend />
-                  <Bar yAxisId="right" dataKey="count" name="Transaksi" fill="#fca5a5" barSize={20} />
-                  <Area yAxisId="left" type="monotone" dataKey="omset" name="Omset" fill="#93c5fd" stroke="#3b82f6" />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Area yAxisId="left" type="monotone" dataKey="omset" name="Omset" fill="url(#omsetGrad)" stroke="#6366f1" strokeWidth={2.5} dot={false} />
+                  <Bar yAxisId="right" dataKey="count" name="Transaksi" fill="#c7d2fe" radius={[4, 4, 0, 0]} barSize={16} />
                 </ComposedChart>
               </ResponsiveContainer>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>No</TableHead>
-                    <TableHead>Tanggal</TableHead>
-                    <TableHead className="text-center">Jml Transaksi</TableHead>
-                    <TableHead className="text-right">Nominal</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {chartData.map((data: any, index: number) => (
-                    <TableRow key={data.date}>
-                      <TableCell>{index + 1}</TableCell>
-                      <TableCell>{data.date}</TableCell>
-                      <TableCell className="text-center">{data.count}</TableCell>
-                      <TableCell className="text-right">Rp {data.omset.toLocaleString('id-ID')}</TableCell>
-                    </TableRow>
-                  ))}
-                  <TableRow className="bg-cyan-600 hover:bg-cyan-600 text-white font-bold">
-                    <TableCell colSpan={2}>Total</TableCell>
-                    <TableCell className="text-center">{totalTransactions}</TableCell>
-                    <TableCell className="text-right">Rp {totalSales.toLocaleString('id-ID')}</TableCell>
-                  </TableRow>
-                  <TableRow className="bg-amber-400 hover:bg-amber-400 text-amber-950 font-bold">
-                    <TableCell colSpan={2}>Rata-rata</TableCell>
-                    <TableCell className="text-center">-</TableCell>
-                    <TableCell className="text-right">Rp {totalTransactions > 0 ? Math.round(totalSales / totalTransactions).toLocaleString('id-ID') : 0}</TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
+          {/* Two column: Top Products + Peak Hours */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Produk Terlaris</CardTitle></CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {topProducts.slice(0, 5).map((p: any, i) => {
+                    const maxRev = (topProducts[0] as any)?.revenue || 1;
+                    return (
+                      <div key={p.name} className="flex items-center gap-3">
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white ${
+                          i === 0 ? 'bg-amber-500' : i === 1 ? 'bg-slate-400' : i === 2 ? 'bg-orange-400' : 'bg-slate-300'
+                        }`}>{i + 1}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-baseline mb-1">
+                            <span className="text-sm font-medium truncate">{p.name}</span>
+                            <span className="text-xs text-muted-foreground ml-2 shrink-0">{p.qty} terjual</span>
+                          </div>
+                          <div className="h-2 bg-muted rounded-full overflow-hidden">
+                            <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all" style={{ width: `${(p.revenue / maxRev) * 100}%` }} />
+                          </div>
+                        </div>
+                        <span className="text-sm font-semibold text-foreground/80 w-28 text-right">{fmt(p.revenue)}</span>
+                      </div>
+                    );
+                  })}
+                  {topProducts.length === 0 && <p className="text-muted-foreground/70 text-sm text-center py-6">Belum ada data</p>}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Jam Sibuk (Peak Hours)</CardTitle></CardHeader>
+              <CardContent className="h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={hourly.filter(h => h.count > 0)} margin={{ top: 5, right: 5, bottom: 0, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(148 163 184 / 0.25)" />
+                    <XAxis dataKey="hour" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 12 }}
+                      formatter={(v: any) => [v, 'Transaksi']} />
+                    <Bar dataKey="count" name="Transaksi" radius={[6, 6, 0, 0]} barSize={14}>
+                      {hourly.filter(h => h.count > 0).map((_, i) => (
+                        <Cell key={i} fill={PALETTE[i % PALETTE.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════ SALES ═══════ */}
+      {activeTab === 'sales' && (
+        <div className="space-y-6">
+          <Card className="border border-border shadow-sm bg-card">
+            <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Grafik Omset & Transaksi Harian</CardTitle></CardHeader>
+            <CardContent className="h-[350px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={dailyChart} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+                  <defs>
+                    <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(148 163 184 / 0.25)" />
+                  <XAxis dataKey="date" tickFormatter={d => format(new Date(d), 'dd MMM', { locale: idLocale })} tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 13 }}
+                    labelFormatter={l => format(new Date(l), 'dd MMMM yyyy', { locale: idLocale })}
+                    formatter={(v: any, n: string) => [n === 'omset' ? fmt(v) : v, n === 'omset' ? 'Omset' : 'Transaksi']} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Area yAxisId="left" type="monotone" dataKey="omset" name="Omset" fill="url(#salesGrad)" stroke="#10b981" strokeWidth={2.5} dot={false} />
+                  <Bar yAxisId="right" dataKey="count" name="Transaksi" fill="#a7f3d0" radius={[4, 4, 0, 0]} barSize={14} />
+                </ComposedChart>
+              </ResponsiveContainer>
             </CardContent>
           </Card>
-        </TabsContent>
 
-        <TabsContent value="products" className="space-y-4 mt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Penjualan Berdasarkan Produk</CardTitle>
-            </CardHeader>
+          <Card className="border border-border shadow-sm overflow-hidden bg-card">
             <CardContent className="p-0">
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Nama Produk</TableHead>
-                    <TableHead className="text-center">Terjual</TableHead>
-                    <TableHead className="text-right">Total Penjualan</TableHead>
+                  <TableRow className="bg-muted/50">
+                    <TableHead className="font-semibold">Tanggal</TableHead>
+                    <TableHead className="text-center font-semibold">Transaksi</TableHead>
+                    <TableHead className="text-right font-semibold">Omset</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {productData.map((item: any) => (
-                    <TableRow key={item.name}>
-                      <TableCell className="font-medium">{item.name}</TableCell>
-                      <TableCell className="text-center">{item.quantity}</TableCell>
-                      <TableCell className="text-right">Rp {item.total.toLocaleString('id-ID')}</TableCell>
+                  {dailyChart.map((d: any) => (
+                    <TableRow key={d.date} className="hover:bg-indigo-50/50">
+                      <TableCell className="font-medium">{format(new Date(d.date), 'EEEE, dd MMM yyyy', { locale: idLocale })}</TableCell>
+                      <TableCell className="text-center"><span className="inline-flex items-center justify-center bg-indigo-100 text-indigo-700 text-xs font-bold w-8 h-6 rounded-md">{d.count}</span></TableCell>
+                      <TableCell className="text-right font-semibold">{fmt(d.omset)}</TableCell>
                     </TableRow>
                   ))}
-                  {productData.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={3} className="text-center py-8 text-slate-500">Belum ada data penjualan</TableCell>
+                  {dailyChart.length > 0 && (
+                    <TableRow className="bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-600 hover:to-violet-600">
+                      <TableCell className="font-bold text-white">Total</TableCell>
+                      <TableCell className="text-center font-bold text-white">{totalTx}</TableCell>
+                      <TableCell className="text-right font-bold text-white">{fmt(totalSales)}</TableCell>
                     </TableRow>
+                  )}
+                  {dailyChart.length === 0 && (
+                    <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground/70 py-10">Belum ada data transaksi</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
             </CardContent>
           </Card>
-        </TabsContent>
+        </div>
+      )}
 
-        <TabsContent value="payments" className="space-y-4 mt-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Metode Pembayaran</CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Metode</TableHead>
-                      <TableHead className="text-center">Transaksi</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {paymentData.map((item: any) => (
-                      <TableRow key={item.method}>
-                        <TableCell className="font-medium">{item.method}</TableCell>
-                        <TableCell className="text-center">{item.count}</TableCell>
-                        <TableCell className="text-right">Rp {item.total.toLocaleString('id-ID')}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+      {/* ═══════ PRODUCTS ═══════ */}
+      {activeTab === 'products' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Top 10 Produk Berdasarkan Pendapatan</CardTitle></CardHeader>
+              <CardContent className="h-[360px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={topProducts.slice(0, 10)} layout="vertical" margin={{ top: 5, right: 10, bottom: 5, left: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgb(148 163 184 / 0.25)" />
+                    <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#475569' }} width={100} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 12 }}
+                      formatter={(v: any) => [fmt(v), 'Pendapatan']} />
+                    <Bar dataKey="revenue" name="Pendapatan" radius={[0, 6, 6, 0]} barSize={18}>
+                      {topProducts.slice(0, 10).map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>Distribusi Pembayaran</CardTitle>
-              </CardHeader>
-              <CardContent className="h-[300px] min-h-0 min-w-0">
+
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Top 10 Produk Berdasarkan Kuantitas</CardTitle></CardHeader>
+              <CardContent className="h-[360px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={paymentData}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                      outerRadius={80}
-                      fill="#8884d8"
-                      dataKey="total"
-                    >
-                      {paymentData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value) => `Rp ${Number(value).toLocaleString('id-ID')}`} />
-                  </PieChart>
+                  <BarChart data={[...topProducts].sort((a: any, b: any) => b.qty - a.qty).slice(0, 10)} layout="vertical" margin={{ top: 5, right: 10, bottom: 5, left: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgb(148 163 184 / 0.25)" />
+                    <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#475569' }} width={100} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 12 }}
+                      formatter={(v: any) => [v, 'Terjual']} />
+                    <Bar dataKey="qty" name="Terjual" radius={[0, 6, 6, 0]} barSize={18}>
+                      {topProducts.slice(0, 10).map((_, i) => <Cell key={i} fill={PALETTE[(i + 3) % PALETTE.length]} />)}
+                    </Bar>
+                  </BarChart>
                 </ResponsiveContainer>
               </CardContent>
             </Card>
           </div>
-        </TabsContent>
 
-        <TabsContent value="profit" className="space-y-4 mt-4">
-          <Card className="max-w-2xl mx-auto">
-            <CardHeader className="text-center border-b">
-              <CardTitle className="text-2xl">Laporan Laba Rugi</CardTitle>
-              <p className="text-slate-500">Periode Keseluruhan</p>
-            </CardHeader>
-            <CardContent className="pt-6 space-y-8">
-              
-              {/* Penjualan Section */}
-              <div className="space-y-2">
-                <h3 className="text-xl font-bold text-slate-800 border-b pb-2">Penjualan:</h3>
-                <div className="flex justify-between py-1">
-                  <span className="text-slate-600">Harga Jual</span>
-                  <span>Rp {totalHargaJual.toLocaleString('id-ID')}</span>
-                </div>
-                <div className="flex justify-between py-1">
-                  <span className="text-slate-600">Harga Pokok</span>
-                  <span>Rp {totalHargaPokok.toLocaleString('id-ID')}</span>
-                </div>
-                <div className="flex justify-between py-2 bg-cyan-600 text-white px-3 font-bold mt-2">
-                  <span>Total Laba Rugi</span>
-                  <span>Rp {totalLabaRugiSales.toLocaleString('id-ID')}</span>
-                </div>
-              </div>
-
-              {/* Pemasukan Section */}
-              <div className="space-y-2">
-                <h3 className="text-xl font-bold text-slate-800 border-b pb-2">Pemasukan (Lainnya):</h3>
-                {moneyFlow.filter(f => f.type === 'Pemasukan' && f.category !== 'Penjualan').length === 0 ? (
-                  <p className="text-slate-400 italic py-1">Tidak ada data pemasukan lainnya</p>
-                ) : (
-                  moneyFlow.filter(f => f.type === 'Pemasukan' && f.category !== 'Penjualan').map(f => (
-                    <div key={f.id} className="flex justify-between py-1">
-                      <span className="text-slate-600">{f.description || f.category}</span>
-                      <span>Rp {f.amount.toLocaleString('id-ID')}</span>
-                    </div>
-                  ))
-                )}
-                <div className="flex justify-between py-2 bg-emerald-600 text-white px-3 font-bold mt-2">
-                  <span>Total Pemasukan</span>
-                  <span>Rp {totalPemasukanLain.toLocaleString('id-ID')}</span>
-                </div>
-              </div>
-
-              {/* Pengeluaran Section */}
-              <div className="space-y-2">
-                <h3 className="text-xl font-bold text-slate-800 border-b pb-2">Pengeluaran:</h3>
-                {moneyFlow.filter(f => f.type === 'Pengeluaran').length === 0 ? (
-                  <p className="text-slate-400 italic py-1">Tidak ada data pengeluaran</p>
-                ) : (
-                  moneyFlow.filter(f => f.type === 'Pengeluaran').map(f => (
-                    <div key={f.id} className="flex justify-between py-1">
-                      <span className="text-slate-600">{f.description || f.category}</span>
-                      <span>Rp {f.amount.toLocaleString('id-ID')}</span>
-                    </div>
-                  ))
-                )}
-                <div className="flex justify-between py-2 bg-red-600 text-white px-3 font-bold mt-2">
-                  <span>Total Pengeluaran</span>
-                  <span>Rp {totalPengeluaran.toLocaleString('id-ID')}</span>
-                </div>
-              </div>
-
-              {/* Laba Bersih */}
-              <div className="flex justify-between py-3 bg-amber-400 text-amber-950 px-4 font-bold text-lg mt-8 shadow-sm">
-                <span>Laba Bersih</span>
-                <span>Rp {labaBersih.toLocaleString('id-ID')}</span>
-              </div>
-
+          <Card className="border border-border shadow-sm overflow-hidden bg-card">
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50">
+                    <TableHead className="w-8 font-semibold">#</TableHead>
+                    <TableHead className="font-semibold">Produk</TableHead>
+                    <TableHead className="text-center font-semibold">Qty Terjual</TableHead>
+                    <TableHead className="text-right font-semibold">Total Pendapatan</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {topProducts.map((p: any, i) => (
+                    <TableRow key={p.name} className="hover:bg-violet-50/50">
+                      <TableCell className="text-muted-foreground/70 font-medium">{i + 1}</TableCell>
+                      <TableCell className="font-medium">{p.name}</TableCell>
+                      <TableCell className="text-center">{p.qty}</TableCell>
+                      <TableCell className="text-right font-semibold">{fmt(p.revenue)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {topProducts.length === 0 && (
+                    <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground/70 py-10">Belum ada data</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
-        </TabsContent>
-      </Tabs>
+        </div>
+      )}
+
+      {/* ═══════ PAYMENTS ═══════ */}
+      {activeTab === 'payments' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Distribusi Metode Pembayaran</CardTitle></CardHeader>
+              <CardContent className="h-[320px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={paymentData} cx="50%" cy="50%" innerRadius={65} outerRadius={110} paddingAngle={4} dataKey="value" cornerRadius={6}
+                      label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}>
+                      {paymentData.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                    </Pie>
+                    <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 13 }}
+                      formatter={(v: any) => [fmt(v), 'Total']} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Detail Pembayaran</CardTitle></CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {paymentData.map((p: any, i) => {
+                    const maxVal = Math.max(...paymentData.map((x: any) => x.value), 1);
+                    return (
+                      <div key={p.name} className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: PALETTE[i % PALETTE.length] }} />
+                            <span className="font-medium text-sm">{p.name}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="font-semibold text-sm">{fmt(p.value)}</span>
+                            <span className="text-xs text-muted-foreground/70 ml-2">({p.count}x)</span>
+                          </div>
+                        </div>
+                        <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+                          <div className="h-full rounded-full transition-all" style={{ width: `${(p.value / maxVal) * 100}%`, backgroundColor: PALETTE[i % PALETTE.length] }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {paymentData.length === 0 && <p className="text-muted-foreground/70 text-sm text-center py-8">Belum ada data</p>}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════ CATEGORIES ═══════ */}
+      {activeTab === 'categories' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <KPICard icon={Layers} label="Total Kategori" value={String(categoryBreakdown.length)} color="indigo"
+              sub={`${Object.keys(productLookup).length} produk terdaftar`} />
+            <KPICard icon={Award} label="Kategori Teratas" value={categoryBreakdown[0]?.name || '-'} color="amber"
+              sub={categoryBreakdown[0] ? fmt(categoryBreakdown[0].revenue) : 'Belum ada data'} />
+            <KPICard icon={ShoppingCart} label="Item Terjual" value={categoryBreakdown.reduce((s, c) => s + c.qty, 0).toLocaleString()} color="cyan" />
+            <KPICard icon={TrendingUp} label="Rata-rata Margin" value={`${categoryBreakdown.length > 0 ? (categoryBreakdown.reduce((s, c) => s + c.margin, 0) / categoryBreakdown.length).toFixed(1) : '0'}%`} color="emerald" />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Pangsa Pendapatan per Kategori</CardTitle></CardHeader>
+              <CardContent className="h-[320px]">
+                {categoryBreakdown.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={categoryBreakdown} cx="50%" cy="50%" innerRadius={65} outerRadius={110} paddingAngle={4} dataKey="revenue" cornerRadius={6}
+                        label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}>
+                        {categoryBreakdown.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                      </Pie>
+                      <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 13 }}
+                        formatter={(v: any) => [fmt(v), 'Pendapatan']} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-muted-foreground/70 text-sm">Belum ada data</div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Performa Kategori</CardTitle></CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {categoryBreakdown.map((c: any, i) => (
+                    <div key={c.name} className="space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: PALETTE[i % PALETTE.length] }} />
+                          <span className="text-sm font-medium">{c.name}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{c.productCount} produk</span>
+                        </div>
+                        <span className="text-sm font-semibold">{fmt(c.revenue)}</span>
+                      </div>
+                      <div className="h-2 bg-muted rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{
+                          width: `${totalCategoryRevenue > 0 ? (c.revenue / totalCategoryRevenue) * 100 : 0}%`,
+                          backgroundColor: PALETTE[i % PALETTE.length],
+                        }} />
+                      </div>
+                    </div>
+                  ))}
+                  {categoryBreakdown.length === 0 && <p className="text-muted-foreground/70 text-sm text-center py-6">Belum ada data</p>}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="border border-border shadow-sm overflow-hidden bg-card">
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50">
+                    <TableHead className="font-semibold">Kategori</TableHead>
+                    <TableHead className="text-center font-semibold">Produk</TableHead>
+                    <TableHead className="text-center font-semibold">Qty</TableHead>
+                    <TableHead className="text-right font-semibold">Pendapatan</TableHead>
+                    <TableHead className="text-right font-semibold">Laba Kotor</TableHead>
+                    <TableHead className="text-right font-semibold">Margin</TableHead>
+                    <TableHead className="text-right font-semibold">Pangsa</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {categoryBreakdown.map((c: any, i) => (
+                    <TableRow key={c.name} className="hover:bg-indigo-50/50">
+                      <TableCell className="font-medium flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: PALETTE[i % PALETTE.length] }} />
+                        {c.name}
+                      </TableCell>
+                      <TableCell className="text-center">{c.productCount}</TableCell>
+                      <TableCell className="text-center">{c.qty}</TableCell>
+                      <TableCell className="text-right font-semibold">{fmt(c.revenue)}</TableCell>
+                      <TableCell className="text-right">{fmt(c.profit)}</TableCell>
+                      <TableCell className="text-right">
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded ${c.margin >= 40 ? 'bg-emerald-100 text-emerald-700' : c.margin >= 20 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
+                          {c.margin.toFixed(1)}%
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground text-sm">
+                        {totalCategoryRevenue > 0 ? ((c.revenue / totalCategoryRevenue) * 100).toFixed(1) : '0'}%
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {categoryBreakdown.length === 0 && (
+                    <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground/70 py-10">Belum ada data</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ═══════ CASHIERS ═══════ */}
+      {activeTab === 'cashiers' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <KPICard icon={UserCircle} label="Jumlah Kasir Aktif" value={String(cashierBreakdown.length)} color="indigo"
+              sub={`${totalTx} transaksi dilayani`} />
+            <KPICard icon={Award} label="Kasir Terbaik" value={cashierBreakdown[0]?.name || '-'} color="amber"
+              sub={cashierBreakdown[0] ? fmt(cashierBreakdown[0].revenue) : 'Belum ada data'} />
+            <KPICard icon={ShoppingCart} label="Avg Transaksi/Kasir" value={cashierBreakdown.length > 0 ? Math.round(totalTx / cashierBreakdown.length).toLocaleString() : '0'} color="cyan" />
+            <KPICard icon={DollarSign} label="Avg Pendapatan/Kasir" value={fmt(cashierBreakdown.length > 0 ? totalSales / cashierBreakdown.length : 0)} color="emerald" />
+          </div>
+
+          {cashierBreakdown.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {cashierBreakdown.slice(0, 3).map((c: any, i) => {
+                const gradients = ['from-amber-400 to-yellow-300', 'from-slate-300 to-slate-200', 'from-orange-400 to-amber-300'];
+                const labels = ['Juara 1', 'Juara 2', 'Juara 3'];
+                return (
+                  <Card key={c.name} className="border border-border shadow-sm overflow-hidden bg-card">
+                    <div className={`h-1.5 bg-gradient-to-r ${gradients[i]}`} />
+                    <CardContent className="p-5">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                          <Award className={`w-4 h-4 ${i === 0 ? 'text-amber-500' : i === 1 ? 'text-muted-foreground/70' : 'text-orange-400'}`} />
+                          {labels[i]}
+                        </span>
+                        <UserCircle className="w-5 h-5 text-muted-foreground/70" />
+                      </div>
+                      <h3 className="text-lg font-bold text-foreground/90 mb-3 truncate">{c.name}</h3>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div>
+                          <p className="text-muted-foreground">Pendapatan</p>
+                          <p className="font-bold text-foreground/90 text-sm">{fmt(c.revenue)}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Transaksi</p>
+                          <p className="font-bold text-foreground/90 text-sm">{c.txCount}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Avg Ticket</p>
+                          <p className="font-bold text-foreground/90 text-sm">{fmt(c.avgTicket)}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Item Terjual</p>
+                          <p className="font-bold text-foreground/90 text-sm">{c.items}</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+
+          <Card className="border border-border shadow-sm bg-card">
+            <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Pendapatan per Kasir</CardTitle></CardHeader>
+            <CardContent className="h-[300px]">
+              {cashierBreakdown.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={cashierBreakdown} layout="vertical" margin={{ top: 5, right: 10, bottom: 5, left: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgb(148 163 184 / 0.25)" />
+                    <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#475569' }} width={120} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 12 }}
+                      formatter={(v: any) => [fmt(v), 'Pendapatan']} />
+                    <Bar dataKey="revenue" name="Pendapatan" radius={[0, 6, 6, 0]} barSize={20}>
+                      {cashierBreakdown.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-muted-foreground/70 text-sm">Belum ada data</div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border border-border shadow-sm overflow-hidden bg-card">
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50">
+                    <TableHead className="w-8 font-semibold">#</TableHead>
+                    <TableHead className="font-semibold">Kasir</TableHead>
+                    <TableHead className="text-center font-semibold">Transaksi</TableHead>
+                    <TableHead className="text-center font-semibold">Item Terjual</TableHead>
+                    <TableHead className="text-right font-semibold">Avg Ticket</TableHead>
+                    <TableHead className="text-right font-semibold">Total Pendapatan</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {cashierBreakdown.map((c: any, i) => (
+                    <TableRow key={c.name} className="hover:bg-indigo-50/50">
+                      <TableCell className="text-muted-foreground/70 font-medium">{i + 1}</TableCell>
+                      <TableCell className="font-medium">{c.name}</TableCell>
+                      <TableCell className="text-center">{c.txCount}</TableCell>
+                      <TableCell className="text-center">{c.items}</TableCell>
+                      <TableCell className="text-right">{fmt(c.avgTicket)}</TableCell>
+                      <TableCell className="text-right font-semibold">{fmt(c.revenue)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {cashierBreakdown.length === 0 && (
+                    <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground/70 py-10">Belum ada data</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ═══════ CUSTOMERS ═══════ */}
+      {activeTab === 'customers' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <KPICard icon={Users} label="Pelanggan Teridentifikasi" value={uniqueCustomerCount.toLocaleString()} color="indigo"
+              sub={`${customers.length} terdaftar di database`} />
+            <KPICard icon={TrendingUp} label="Returning Rate" value={`${returningRate}%`} color="emerald"
+              sub={`${returningCount} dari ${uniqueCustomerCount} pelanggan`} trend={Number(returningRate) >= 30 ? 'up' : undefined} />
+            <KPICard icon={DollarSign} label="Avg Spend / Pelanggan" value={fmt(avgSpendPerCustomer)} color="cyan" />
+            <KPICard icon={UserCircle} label="Walk-In" value={walkInStats ? `${walkInStats.txCount}` : '0'} color="slate"
+              sub={walkInStats ? `Kontribusi ${fmt(walkInStats.revenue)}` : 'Tidak ada'} />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Top 10 Pelanggan</CardTitle></CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {identifiedCustomers.slice(0, 10).map((c: any, i) => {
+                    const maxRev = (identifiedCustomers[0] as any)?.revenue || 1;
+                    return (
+                      <div key={c.name} className="flex items-center gap-3">
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white ${
+                          i === 0 ? 'bg-amber-500' : i === 1 ? 'bg-slate-400' : i === 2 ? 'bg-orange-400' : 'bg-slate-300'
+                        }`}>{i + 1}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-baseline mb-1">
+                            <span className="text-sm font-medium truncate">{c.name}</span>
+                            <span className="text-xs text-muted-foreground ml-2 shrink-0">{c.txCount}× kunjungan</span>
+                          </div>
+                          <div className="h-2 bg-muted rounded-full overflow-hidden">
+                            <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500" style={{ width: `${(c.revenue / maxRev) * 100}%` }} />
+                          </div>
+                        </div>
+                        <span className="text-sm font-semibold text-foreground/80 w-28 text-right">{fmt(c.revenue)}</span>
+                      </div>
+                    );
+                  })}
+                  {identifiedCustomers.length === 0 && <p className="text-muted-foreground/70 text-sm text-center py-6">Belum ada pelanggan teridentifikasi</p>}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Frekuensi Kunjungan</CardTitle></CardHeader>
+              <CardContent className="h-[300px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={frequencyBuckets} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(148 163 184 / 0.25)" />
+                    <XAxis dataKey="range" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 12 }}
+                      formatter={(v: any) => [v, 'Pelanggan']} />
+                    <Bar dataKey="count" name="Pelanggan" radius={[6, 6, 0, 0]} barSize={36}>
+                      {frequencyBuckets.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="border border-border shadow-sm overflow-hidden bg-card">
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50">
+                    <TableHead className="w-8 font-semibold">#</TableHead>
+                    <TableHead className="font-semibold">Pelanggan</TableHead>
+                    <TableHead className="text-center font-semibold">Kunjungan</TableHead>
+                    <TableHead className="text-center font-semibold">Item Dibeli</TableHead>
+                    <TableHead className="font-semibold">Kunjungan Terakhir</TableHead>
+                    <TableHead className="text-right font-semibold">Total Belanja</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {identifiedCustomers.map((c: any, i) => (
+                    <TableRow key={c.name} className="hover:bg-cyan-50/50">
+                      <TableCell className="text-muted-foreground/70 font-medium">{i + 1}</TableCell>
+                      <TableCell className="font-medium">{c.name}</TableCell>
+                      <TableCell className="text-center">
+                        <span className={`inline-flex items-center justify-center text-xs font-bold w-8 h-6 rounded-md ${c.txCount > 1 ? 'bg-emerald-100 text-emerald-700' : 'bg-muted text-muted-foreground'}`}>
+                          {c.txCount}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-center">{c.items}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{format(new Date(c.lastDate), 'dd MMM yyyy', { locale: idLocale })}</TableCell>
+                      <TableCell className="text-right font-semibold">{fmt(c.revenue)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {identifiedCustomers.length === 0 && (
+                    <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground/70 py-10">Belum ada pelanggan teridentifikasi pada periode ini</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ═══════ STOCK ═══════ */}
+      {activeTab === 'stock' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <KPICard icon={Boxes} label="Nilai Stok (HPP)" value={fmt(totalStockValue)} color="indigo"
+              sub={`${products.length} produk`} />
+            <KPICard icon={DollarSign} label="Potensi Penjualan" value={fmt(totalRetailValue)} color="emerald"
+              sub={`Potensi laba ${fmt(totalRetailValue - totalStockValue)}`} />
+            <KPICard icon={AlertTriangle} label="Stok Menipis" value={lowStockCount.toLocaleString()} color="amber"
+              sub="Stok ≤ 10 unit" trend={lowStockCount > 0 ? 'down' : undefined} />
+            <KPICard icon={Archive} label="Stok Habis" value={outOfStockCount.toLocaleString()} color="rose"
+              sub={outOfStockCount > 0 ? 'Segera restock!' : 'Semua tersedia'} />
+          </div>
+
+          {criticalStock.length > 0 && (
+            <Card className="shadow-sm bg-gradient-to-br from-rose-500/10 to-orange-500/10 border border-rose-500/30">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base font-semibold text-rose-700 dark:text-rose-300 flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5" /> Perlu Segera Restock (habis dalam ≤ 7 hari)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {criticalStock.slice(0, 9).map((p: any) => (
+                    <div key={p.id} className="bg-card rounded-lg p-3 border border-rose-500/20 flex items-center justify-between">
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm truncate text-foreground">{p.name}</p>
+                        <p className="text-xs text-muted-foreground">{p.category} · Stok {p.stock}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-lg font-bold text-rose-600 dark:text-rose-400">{p.daysUntilOut}d</p>
+                        <p className="text-[10px] text-muted-foreground">{p.dailyRate.toFixed(1)}/hari</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {criticalStock.length > 9 && (
+                  <p className="text-xs text-muted-foreground mt-3 text-center">+{criticalStock.length - 9} produk lain juga butuh restock</p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base font-semibold text-foreground/80 flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-amber-500" /> Fast Movers (Terlaris dalam Periode)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2.5">
+                  {fastMovers.map((p: any, i) => (
+                    <div key={p.id} className="flex items-center gap-3 py-1">
+                      <span className="text-xs text-muted-foreground/70 font-bold w-5">{i + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{p.name}</p>
+                        <p className="text-xs text-muted-foreground">{p.category} · Stok {p.stock}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-bold text-emerald-600">{p.soldQty} terjual</p>
+                        <p className="text-[11px] text-muted-foreground/70">{p.dailyRate.toFixed(1)}/hari</p>
+                      </div>
+                    </div>
+                  ))}
+                  {fastMovers.length === 0 && <p className="text-muted-foreground/70 text-sm text-center py-6">Belum ada produk terjual pada periode ini</p>}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base font-semibold text-foreground/80 flex items-center gap-2">
+                  <Archive className="w-4 h-4 text-muted-foreground" /> Slow Movers (Tidak Terjual pada Periode)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2.5 max-h-[360px] overflow-y-auto">
+                  {slowMovers.slice(0, 20).map((p: any) => (
+                    <div key={p.id} className="flex items-center gap-3 py-1">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{p.name}</p>
+                        <p className="text-xs text-muted-foreground">{p.category}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-bold text-foreground/80">Stok {p.stock}</p>
+                        <p className="text-[11px] text-muted-foreground/70">{fmt(p.stockValue)} tertahan</p>
+                      </div>
+                    </div>
+                  ))}
+                  {slowMovers.length === 0 && <p className="text-muted-foreground/70 text-sm text-center py-6">Semua produk terjual pada periode ini</p>}
+                  {slowMovers.length > 20 && <p className="text-xs text-muted-foreground/70 text-center pt-2">+{slowMovers.length - 20} produk lain</p>}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════ PROFIT / LOSS ═══════ */}
+      {activeTab === 'profit' && (
+        <div className="space-y-6">
+          {/* P&L Summary Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <KPICard icon={DollarSign} label="Pendapatan" value={fmt(totalRevenue)} color="indigo" />
+            <KPICard icon={Package} label="Harga Pokok" value={fmt(totalCostOfGoods)} color="slate" />
+            <KPICard icon={TrendingUp} label="Laba Kotor" value={fmt(grossProfit)} color="emerald"
+              sub={`Margin ${margin}%`} trend={grossProfit >= 0 ? 'up' : 'down'} />
+            <KPICard icon={TrendingDown} label="Laba Bersih" value={fmt(netProfit)} color={netProfit >= 0 ? 'emerald' : 'rose'}
+              trend={netProfit >= 0 ? 'up' : 'down'} />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* P&L Statement */}
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="border-b bg-muted/50/50">
+                <CardTitle className="text-base font-semibold text-foreground/80">Laporan Laba Rugi</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-5 space-y-5">
+                <PLSection title="Penjualan" items={[
+                  { label: 'Pendapatan Penjualan', value: totalRevenue },
+                  { label: 'Harga Pokok Penjualan', value: -totalCostOfGoods },
+                ]} total={{ label: 'Laba Kotor', value: grossProfit }} color="emerald" />
+
+                {totalPassThrough > 0 && (
+                  <div className="space-y-1.5">
+                    <PLSection title="Pajak & Biaya Layanan" items={[
+                      { label: 'Pajak', value: totalTax },
+                      { label: 'Biaya Layanan', value: totalServiceCharge },
+                    ].filter(x => x.value > 0)} total={{ label: 'Total Pajak & Biaya ', value: totalPassThrough }} color="slate" />
+                    <p className="text-xs text-muted-foreground/70 italic px-1">
+                      Pajak dan Biaya Layanan tidak Termasuk dalam perhitungan Laba Kotor karena bersifat pass-through (diteruskan ke pemerintah/pelanggan) dan tidak mempengaruhi margin penjualan.
+                    </p>
+                  </div>
+                )}
+
+                <PLSection title="Pendapatan Lain" items={
+                  filteredFlow.filter(f => f.type === 'Pemasukan' && f.category !== 'Penjualan').map(f => ({
+                    label: f.description || f.category, value: f.amount,
+                  }))
+                } total={{ label: 'Total Pendapatan Lain', value: otherIncome }} color="cyan"
+                  empty="Tidak ada pendapatan lain" />
+
+                <PLSection title="Pengeluaran" items={
+                  filteredFlow.filter(f => f.type === 'Pengeluaran').map(f => ({
+                    label: f.description || f.category, value: f.amount,
+                  }))
+                } total={{ label: 'Total Pengeluaran', value: totalExpenses }} color="rose"
+                  empty="Tidak ada pengeluaran" />
+
+                {totalPassThrough > 0 && (
+                  <div className="flex justify-between items-center px-3 py-2.5 rounded-lg bg-muted/50 border border-slate-200 text-xs text-muted-foreground">
+                    <span>Total Omset (Pendapatan + Pajak + Layanan)</span>
+                    <span className="font-semibold text-foreground/80">{fmt(totalGrossSales)}</span>
+                  </div>
+                )}
+
+                <div className={`flex justify-between items-center p-4 rounded-xl font-bold text-lg ${
+                  netProfit >= 0
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white'
+                    : 'bg-gradient-to-r from-rose-500 to-red-500 text-white'
+                }`}>
+                  <span>Laba Bersih</span>
+                  <span>{fmt(netProfit)}</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Expense Breakdown */}
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Distribusi Pengeluaran</CardTitle></CardHeader>
+              <CardContent className="h-[340px]">
+                {expenseData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={expenseData} cx="50%" cy="50%" innerRadius={55} outerRadius={100} paddingAngle={4} dataKey="value" cornerRadius={6}
+                        label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}>
+                        {expenseData.map((_, i) => <Cell key={i} fill={PALETTE[(i + 2) % PALETTE.length]} />)}
+                      </Pie>
+                      <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 13 }}
+                        formatter={(v: any) => [fmt(v), 'Total']} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-muted-foreground/70 text-sm">Belum ada data pengeluaran</div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════ Sub-components ═══════
+
+function KPICard({ icon: Icon, label, value, color, sub, trend }: {
+  icon: any; label: string; value: string; color: string; sub?: string; trend?: 'up' | 'down';
+}) {
+  const colors: Record<string, string> = {
+    indigo: 'from-indigo-500 to-violet-500',
+    cyan: 'from-cyan-500 to-blue-500',
+    emerald: 'from-emerald-500 to-teal-500',
+    rose: 'from-rose-500 to-red-500',
+    slate: 'from-slate-500 to-slate-600',
+    amber: 'from-amber-500 to-orange-500',
+  };
+  return (
+    <Card className="border border-border shadow-sm overflow-hidden bg-card">
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between mb-3">
+          <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${colors[color] || colors.indigo} flex items-center justify-center shadow-lg`}>
+            <Icon className="w-5 h-5 text-white" strokeWidth={2} />
+          </div>
+          {trend && (
+            <div className={`flex items-center gap-0.5 text-xs font-semibold ${trend === 'up' ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {trend === 'up' ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
+            </div>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">{label}</p>
+        <p className="text-xl font-extrabold text-foreground tracking-tight">{value}</p>
+        {sub && <p className="text-xs text-muted-foreground/75 mt-1">{sub}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+function PLSection({ title, items, total, color, empty }: {
+  title: string; items: { label: string; value: number }[]; total: { label: string; value: number };
+  color: string; empty?: string;
+}) {
+  const bg: Record<string, string> = {
+    emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+    cyan: 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-300',
+    rose: 'bg-rose-500/10 text-rose-700 dark:text-rose-300',
+    slate: 'bg-muted text-foreground/80',
+  };
+  return (
+    <div className="space-y-1.5">
+      <h4 className="text-sm font-bold text-muted-foreground uppercase tracking-wide">{title}</h4>
+      {items.length > 0 ? items.map((it, i) => (
+        <div key={i} className="flex justify-between py-1 text-sm">
+          <span className="text-muted-foreground">{it.label}</span>
+          <span className="font-medium text-foreground">{it.value < 0 ? `(${fmt(Math.abs(it.value))})` : fmt(it.value)}</span>
+        </div>
+      )) : (
+        <p className="text-xs text-muted-foreground/70 italic py-1">{empty || 'Tidak ada data'}</p>
+      )}
+      <div className={`flex justify-between py-2 px-3 rounded-lg font-semibold text-sm ${bg[color] || bg.emerald}`}>
+        <span>{total.label}</span>
+        <span>{fmt(total.value)}</span>
+      </div>
     </div>
   );
 }

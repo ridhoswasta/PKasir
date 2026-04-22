@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:lib.rs)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(npm install:*)",
+      "Bash(ls E:/Project/PKasir/vite.config.*)",
+      "Bash(curl -s http://localhost:3000/api/settings)",
+      "Bash(cargo check:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx tauri:*)",
+      "Bash(npm run *)",
+      "Bash(git stash *)",
+      "Bash(git checkout *)"
+    ]
+  }
+}

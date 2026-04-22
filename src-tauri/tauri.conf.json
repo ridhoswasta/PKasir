@@ -1,32 +1,42 @@
 {
-  "productName": "POS System",
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "PKasir",
   "version": "0.1.0",
   "identifier": "com.pos.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devUrl": "http://localhost:3000",
+    "devUrl": "http://localhost:5173",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "POS System",
+        "label": "main",
+        "title": "PKasir - Point of Sale",
         "width": 1200,
         "height": 800,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "decorations": false
       }
     ],
     "security": {
       "csp": null
     }
   },
-  "plugins": {
-    "sql": {
-      "preload": [
-        "sqlite:pos.db"
-      ]
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "icon": ["icons/icon.ico"],
+    "publisher": "PKasir",
+    "category": "Business",
+    "shortDescription": "PKasir - Point of Sale",
+    "longDescription": "A modern Point of Sale desktop application.",
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine"
+      }
     }
   }
 }

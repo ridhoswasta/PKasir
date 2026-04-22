@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -7,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { logActivity } from '../services/activity';
 
 export function InventoryModule() {
   const [products, setProducts] = useState<any[]>([]);
@@ -15,7 +17,7 @@ export function InventoryModule() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const fetchProducts = () => {
-    fetch('/api/products').then(res => res.json()).then(setProducts);
+    invoke('get_products').then((data: any) => setProducts(data)).catch(() => {});
   };
 
   useEffect(() => {
@@ -25,17 +27,15 @@ export function InventoryModule() {
   const handleAdjustStock = async () => {
     if (!selectedProduct) return;
     try {
-      const res = await fetch(`/api/products/${selectedProduct.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...selectedProduct, stock: selectedProduct.stock + adjustment })
+      await invoke('update_product', {
+        id: selectedProduct.id,
+        product: { ...selectedProduct, stock: selectedProduct.stock + adjustment }
       });
-      if (res.ok) {
-        toast.success(`Stok berhasil disesuaikan untuk ${selectedProduct.name}`);
-        setIsDialogOpen(false);
-        setAdjustment(0);
-        fetchProducts();
-      }
+      logActivity('Update Stok', selectedProduct.name, `${adjustment >= 0 ? '+' : ''}${adjustment} → ${selectedProduct.stock + adjustment} ${selectedProduct.unit || ''}`);
+      toast.success(`Stok berhasil disesuaikan untuk ${selectedProduct.name}`);
+      setIsDialogOpen(false);
+      setAdjustment(0);
+      fetchProducts();
     } catch (error) {
       toast.error('Gagal menyesuaikan stok');
     }
@@ -44,7 +44,7 @@ export function InventoryModule() {
   return (
     <div className="p-8 space-y-6 overflow-y-auto h-full">
       <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold text-slate-800">Manajemen Inventaris</h2>
+        <h2 className="text-3xl font-extrabold text-foreground tracking-tight">Manajemen Inventaris</h2>
       </div>
 
       <Card>

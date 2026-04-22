@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
@@ -7,8 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
+import { logActivity } from '../services/activity';
 
 export function ProductsModule() {
   const [products, setProducts] = useState<any[]>([]);
@@ -19,39 +20,38 @@ export function ProductsModule() {
   const [currentProduct, setCurrentProduct] = useState({ 
     id: '', name: '', category: '', price: 0, costPrice: 0, stock: 0, description: '', image: '', unit: '', variants: [] as any[]
   });
-  const [hasHotColdVariants, setHasHotColdVariants] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchProducts = () => {
-    fetch('/api/products').then(res => res.json()).then(setProducts);
+    invoke('get_products').then(setProducts).catch(() => {});
   };
 
   useEffect(() => {
     fetchProducts();
-    fetch('/api/settings').then(res => res.json()).then(setSettings);
+    invoke('get_settings').then(setSettings).catch(() => {});
   }, []);
 
   const handleSaveProduct = async () => {
+    if (!currentProduct.unit) {
+      toast.error('Satuan wajib dipilih');
+      return;
+    }
     try {
-      const url = isEditMode ? `/api/products/${currentProduct.id}` : '/api/products';
-      const method = isEditMode ? 'PUT' : 'POST';
-      
-      const variantsToSave = hasHotColdVariants 
-        ? [{ name: 'Panas', price: 0 }, { name: 'Dingin', price: 0 }] 
-        : [];
+      const cleanVariants = (currentProduct.variants || []).filter((v: any) => v.name?.trim());
+      const productData = { ...currentProduct, variants: cleanVariants };
 
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...currentProduct, variants: variantsToSave })
-      });
-      if (res.ok) {
-        toast.success(isEditMode ? 'Produk berhasil diperbarui' : 'Produk berhasil ditambahkan');
-        setIsDialogOpen(false);
-        setCurrentProduct({ id: '', name: '', category: '', price: 0, costPrice: 0, stock: 0, description: '', image: '', unit: '', variants: [] });
-        setHasHotColdVariants(false);
-        fetchProducts();
+      if (isEditMode) {
+        await invoke('update_product', { id: currentProduct.id, product: productData });
+        logActivity('Edit Produk', currentProduct.name, `Harga: Rp ${currentProduct.price?.toLocaleString('id-ID')}`);
+      } else {
+        await invoke('create_product', { product: productData });
+        logActivity('Tambah Produk', currentProduct.name, `Kategori: ${currentProduct.category}, Harga: Rp ${currentProduct.price?.toLocaleString('id-ID')}`);
       }
+
+      toast.success(isEditMode ? 'Produk berhasil diperbarui' : 'Produk berhasil ditambahkan');
+      setIsDialogOpen(false);
+      setCurrentProduct({ id: '', name: '', category: '', price: 0, costPrice: 0, stock: 0, description: '', image: '', unit: '', variants: [] });
+      fetchProducts();
     } catch (error) {
       toast.error('Gagal menyimpan produk');
     }
@@ -60,12 +60,11 @@ export function ProductsModule() {
   const handleDeleteProduct = async () => {
     if (!productToDelete) return;
     try {
-      const res = await fetch(`/api/products/${productToDelete.id}`, { method: 'DELETE' });
-      if (res.ok) {
-        toast.success('Produk berhasil dihapus');
-        setProductToDelete(null);
-        fetchProducts();
-      }
+      await invoke('delete_product', { id: productToDelete.id });
+      logActivity('Hapus Produk', productToDelete.name);
+      toast.success('Produk berhasil dihapus');
+      setProductToDelete(null);
+      fetchProducts();
     } catch (error) {
       toast.error('Gagal menghapus produk');
     }
@@ -84,14 +83,12 @@ export function ProductsModule() {
 
   const openAddDialog = () => {
     setCurrentProduct({ id: '', name: '', category: '', price: 0, costPrice: 0, stock: 0, description: '', image: '', unit: '', variants: [] });
-    setHasHotColdVariants(false);
     setIsEditMode(false);
     setIsDialogOpen(true);
   };
 
   const openEditDialog = (product: any) => {
-    setCurrentProduct(product);
-    setHasHotColdVariants(product.variants && product.variants.length > 0 && product.variants.some((v: any) => v.name === 'Panas' || v.name === 'Dingin'));
+    setCurrentProduct({ ...product, variants: product.variants || [] });
     setIsEditMode(true);
     setIsDialogOpen(true);
   };
@@ -99,7 +96,7 @@ export function ProductsModule() {
   return (
     <div className="p-8 space-y-6 overflow-y-auto h-full">
       <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold text-slate-800">Daftar Produk</h2>
+        <h2 className="text-3xl font-extrabold text-foreground tracking-tight">Daftar Produk</h2>
         <Button className="bg-orange-500 hover:bg-orange-600" onClick={openAddDialog}>
           <Plus className="w-4 h-4 mr-2" />
           Tambah Produk
@@ -148,15 +145,66 @@ export function ProductsModule() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2 col-span-2 flex items-center justify-between border p-4 rounded-lg">
-                <div>
-                  <Label className="text-base">Varian Panas/Dingin</Label>
-                  <p className="text-sm text-slate-500">Aktifkan jika produk ini memiliki pilihan Panas atau Dingin</p>
+              <div className="space-y-3 col-span-2 border p-4 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-base">Varian Produk</Label>
+                    <p className="text-sm text-slate-500">Tambahkan varian seperti ukuran, rasa, suhu, dll.</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentProduct(prev => ({
+                      ...prev,
+                      variants: [...(prev.variants || []), { name: '', price: 0 }]
+                    }))}
+                  >
+                    <Plus className="w-3.5 h-3.5 mr-1" /> Tambah Varian
+                  </Button>
                 </div>
-                <Switch 
-                  checked={hasHotColdVariants} 
-                  onCheckedChange={setHasHotColdVariants} 
-                />
+                {(currentProduct.variants || []).length > 0 && (
+                  <div className="space-y-2">
+                    {(currentProduct.variants || []).map((_: any, idx: number) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <Input
+                          placeholder="Nama varian (mis. Panas, Large, Pedas)"
+                          value={currentProduct.variants[idx]?.name || ''}
+                          onChange={(e) => {
+                            const updated = [...currentProduct.variants];
+                            updated[idx] = { ...updated[idx], name: e.target.value };
+                            setCurrentProduct(prev => ({ ...prev, variants: updated }));
+                          }}
+                          className="flex-1"
+                        />
+                        <Input
+                          type="number"
+                          placeholder="Tambahan harga"
+                          value={currentProduct.variants[idx]?.price || 0}
+                          onChange={(e) => {
+                            const updated = [...currentProduct.variants];
+                            updated[idx] = { ...updated[idx], price: Number(e.target.value) || 0 };
+                            setCurrentProduct(prev => ({ ...prev, variants: updated }));
+                          }}
+                          className="w-32"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="shrink-0"
+                          onClick={() => {
+                            const updated = currentProduct.variants.filter((__: any, i: number) => i !== idx);
+                            setCurrentProduct(prev => ({ ...prev, variants: updated }));
+                          }}
+                        >
+                          <Trash2 className="w-4 h-4 text-red-500" />
+                        </Button>
+                      </div>
+                    ))}
+                    <p className="text-xs text-slate-500">Tambahan harga = selisih dari harga dasar. Isi 0 jika tidak ada tambahan.</p>
+                  </div>
+                )}
               </div>
               <div className="space-y-2 col-span-2">
                 <Label>Foto Produk</Label>
