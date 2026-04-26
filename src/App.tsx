@@ -10,6 +10,7 @@ import { CustomersModule } from './components/CustomersModule';
 import { SettingsModule } from './components/SettingsModule';
 import { TransactionHistoryModule } from './components/TransactionHistoryModule';
 import { UserManagementModule } from './components/UserManagementModule';
+import { DiscountsModule } from './components/DiscountsModule';
 import { SplashScreen } from './components/SplashScreen';
 import { LoginScreen } from './components/LoginScreen';
 import { WindowTitlebar } from './components/WindowTitlebar';
@@ -88,6 +89,7 @@ function AppInner() {
       case 'customers': return <CustomersModule />;
       case 'settings': return <SettingsModule />;
       case 'users': return <UserManagementModule />;
+      case 'discounts': return <DiscountsModule />;
       default: return <DashboardModule setActiveTab={setActiveTab} />;
     }
   };

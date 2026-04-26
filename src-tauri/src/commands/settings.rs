@@ -15,7 +15,7 @@ fn split_csv(s: &Option<String>) -> Vec<String> {
 pub fn get_settings(db: State<'_, AppDb>) -> Result<Settings, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     conn.query_row(
-        "SELECT taxRate, serviceCharge, printerName, paperWidth, receiptHeader, receiptFooter, logo, logoWidth, logoHeight, productCategories, flowCategories, productUnits, pointMultiplier, printerType, printerIp, printerPort, printerCharset, printerOpenDrawer, tauriPrinterName, tauriPrinterInterface, tables, cartSound, virtualKeyboard, backupPath, autoBackupEnabled, autoBackupPath, lastBackupAt, autoBackupIntervalSeconds, qrisImage FROM settings WHERE id='default'",
+        "SELECT taxRate, serviceCharge, printerName, paperWidth, receiptHeader, receiptFooter, logo, logoWidth, logoHeight, productCategories, flowCategories, productUnits, pointMultiplier, printerType, printerIp, printerPort, printerCharset, printerOpenDrawer, tauriPrinterName, tauriPrinterInterface, tables, cartSound, virtualKeyboard, backupPath, autoBackupEnabled, autoBackupPath, lastBackupAt, autoBackupIntervalSeconds, qrisImage, displayPhotos, displaySlideshowInterval FROM settings WHERE id='default'",
         [],
         |row| {
             let product_categories: Option<String> = row.get(9)?;
@@ -24,6 +24,11 @@ pub fn get_settings(db: State<'_, AppDb>) -> Result<Settings, String> {
             let tables: Option<String> = row.get(20)?;
             let receipt_header: Option<String> = row.get(4)?;
             let receipt_footer: Option<String> = row.get(5)?;
+            let display_photos_json: Option<String> = row.get(29)?;
+            let display_photos: Vec<String> = display_photos_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                .unwrap_or_default();
             Ok(Settings {
                 tax_rate: row.get(0)?,
                 service_charge: row.get(1)?,
@@ -54,6 +59,8 @@ pub fn get_settings(db: State<'_, AppDb>) -> Result<Settings, String> {
                 last_backup_at: row.get(26)?,
                 auto_backup_interval_seconds: row.get(27)?,
                 qris_image: row.get(28)?,
+                display_photos,
+                display_slideshow_interval: row.get(30)?,
             })
         },
     )
@@ -66,8 +73,13 @@ pub fn update_settings(db: State<'_, AppDb>, settings: SettingsInput) -> Result<
     let join = |v: &Option<Vec<String>>| -> String {
         v.as_ref().map(|a| a.join(",")).unwrap_or_default()
     };
+    let display_photos_json = settings
+        .display_photos
+        .as_ref()
+        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into()))
+        .unwrap_or_else(|| "[]".into());
     conn.execute(
-        "UPDATE settings SET taxRate=?1, serviceCharge=?2, printerName=?3, paperWidth=?4, receiptHeader=?5, receiptFooter=?6, logo=?7, logoWidth=?8, logoHeight=?9, productCategories=?10, flowCategories=?11, productUnits=?12, pointMultiplier=?13, printerType=?14, printerIp=?15, printerPort=?16, printerCharset=?17, printerOpenDrawer=?18, tauriPrinterName=?19, tauriPrinterInterface=?20, tables=?21, cartSound=?22, virtualKeyboard=?23, backupPath=?24, autoBackupEnabled=?25, autoBackupPath=?26, autoBackupIntervalSeconds=?27, qrisImage=?28 WHERE id='default'",
+        "UPDATE settings SET taxRate=?1, serviceCharge=?2, printerName=?3, paperWidth=?4, receiptHeader=?5, receiptFooter=?6, logo=?7, logoWidth=?8, logoHeight=?9, productCategories=?10, flowCategories=?11, productUnits=?12, pointMultiplier=?13, printerType=?14, printerIp=?15, printerPort=?16, printerCharset=?17, printerOpenDrawer=?18, tauriPrinterName=?19, tauriPrinterInterface=?20, tables=?21, cartSound=?22, virtualKeyboard=?23, backupPath=?24, autoBackupEnabled=?25, autoBackupPath=?26, autoBackupIntervalSeconds=?27, qrisImage=?28, displayPhotos=?29, displaySlideshowInterval=?30 WHERE id='default'",
         rusqlite::params![
             settings.tax_rate,
             settings.service_charge,
@@ -97,6 +109,8 @@ pub fn update_settings(db: State<'_, AppDb>, settings: SettingsInput) -> Result<
             settings.auto_backup_path.as_deref().unwrap_or(""),
             settings.auto_backup_interval_seconds.unwrap_or(0),
             settings.qris_image.as_deref().unwrap_or(""),
+            display_photos_json,
+            settings.display_slideshow_interval.unwrap_or(5),
         ],
     ).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({ "success": true }))

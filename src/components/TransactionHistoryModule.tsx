@@ -79,6 +79,8 @@ export function TransactionHistoryModule() {
         serviceCharge: t.serviceCharge || 0,
         serviceRate,
         total: t.total || 0,
+        discount: t.discount || 0,
+        discountName: t.discountName || undefined,
         paymentMethod: t.paymentMethod,
         amountPaid: t.amountPaid,
         change: t.change,
@@ -148,6 +150,7 @@ export function TransactionHistoryModule() {
           ${itemRows}
           <div class="divider"></div>
           <div class="item"><span>Subtotal</span><span>Rp ${(t.subtotal || 0).toLocaleString('id-ID')}</span></div>
+          ${t.discount ? `<div class="item" style="color:#dc2626"><span>Diskon${t.discountName ? ` (${t.discountName})` : ''}</span><span>-Rp ${(t.discount || 0).toLocaleString('id-ID')}</span></div>` : ''}
           ${t.tax ? `<div class="item"><span>Pajak (${taxRate}%)</span><span>Rp ${t.tax.toLocaleString('id-ID')}</span></div>` : ''}
           ${t.serviceCharge ? `<div class="item"><span>Layanan (${serviceRate}%)</span><span>Rp ${t.serviceCharge.toLocaleString('id-ID')}</span></div>` : ''}
           <div class="divider"></div>
@@ -189,6 +192,7 @@ export function TransactionHistoryModule() {
         'Item',
         'Jumlah Item',
         'Subtotal',
+        'Diskon',
         'Pajak',
         'Biaya Layanan',
         'Total',
@@ -212,6 +216,7 @@ export function TransactionHistoryModule() {
           itemSummary,
           totalQty,
           t.subtotal || 0,
+          t.discount || 0,
           t.tax || 0,
           t.serviceCharge || 0,
           t.total || 0,
@@ -333,6 +338,7 @@ export function TransactionHistoryModule() {
 
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><span>Rp {(viewTx.subtotal || 0).toLocaleString('id-ID')}</span></div>
+                {viewTx.discount > 0 && <div className="flex justify-between text-red-500"><span>Diskon{viewTx.discountName ? ` (${viewTx.discountName})` : ''}</span><span>-Rp {(viewTx.discount || 0).toLocaleString('id-ID')}</span></div>}
                 {viewTx.tax > 0 && <div className="flex justify-between"><span className="text-slate-500">Pajak</span><span>Rp {viewTx.tax.toLocaleString('id-ID')}</span></div>}
                 {viewTx.serviceCharge > 0 && <div className="flex justify-between"><span className="text-slate-500">Biaya Layanan</span><span>Rp {viewTx.serviceCharge.toLocaleString('id-ID')}</span></div>}
                 <div className="flex justify-between text-base font-bold pt-1 border-t">
@@ -438,9 +444,17 @@ export function TransactionHistoryModule() {
 
                   {/* Middle: total */}
                   <div className="shrink-0 text-right">
+                    {t.discount > 0 && (
+                      <p className="text-xs text-muted-foreground line-through whitespace-nowrap">
+                        Rp {((t.total || 0) + (t.discount || 0)).toLocaleString('id-ID')}
+                      </p>
+                    )}
                     <p className="text-base font-bold text-slate-800 whitespace-nowrap">
                       Rp {t.total.toLocaleString('id-ID')}
                     </p>
+                    {t.discount > 0 && (
+                      <p className="text-[11px] text-red-500 font-medium">Diskon -Rp {(t.discount || 0).toLocaleString('id-ID')}</p>
+                    )}
                     <p className="text-[11px] text-slate-400 mt-0.5">{totalQty} item</p>
                   </div>
 

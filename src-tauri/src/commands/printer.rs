@@ -96,6 +96,15 @@ fn build_receipt_bytes(input: &PrintReceiptInput, settings_row: &ReceiptSettings
     push_line(&mut buf, &divider());
 
     push_line(&mut buf, &pad("Subtotal", &fmt_rp(input.subtotal), cols));
+    if let Some(disc) = input.discount {
+        if disc > 0.0 {
+            let label = match input.discount_name.as_deref() {
+                Some(n) if !n.is_empty() => format!("Diskon ({})", n),
+                _ => "Diskon".to_string(),
+            };
+            push_line(&mut buf, &pad(&label, &format!("-{}", fmt_rp(disc)), cols));
+        }
+    }
     if input.tax > 0.0 {
         push_line(&mut buf, &pad(&format!("Pajak ({}%)", settings_row.tax_rate), &fmt_rp(input.tax), cols));
     }

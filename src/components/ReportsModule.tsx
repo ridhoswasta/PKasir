@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ComposedChart, Area, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, LineChart, Line } from 'recharts';
-import { TrendingUp, TrendingDown, DollarSign, ShoppingCart, Package, CreditCard, ArrowUpRight, ArrowDownRight, Calendar, Filter, Users, UserCircle, Layers, Archive, Award, AlertTriangle, Zap, Boxes } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, ShoppingCart, Package, CreditCard, ArrowUpRight, ArrowDownRight, Calendar, Filter, Users, UserCircle, Layers, Archive, Award, AlertTriangle, Zap, Boxes, Percent, Tag } from 'lucide-react';
 import { format, subDays, startOfDay, endOfDay, isWithinInterval } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 
@@ -70,17 +70,20 @@ export function ReportsModule() {
   }, [moneyFlow, range, customFrom, customTo]);
 
   // KPIs
-  const totalSales = filtered.reduce((s, t) => s + t.total, 0);
+  const totalSales = filtered.reduce((s, t) => s + (t.total || 0), 0);
+  const totalDiscount = filtered.reduce((s, t) => s + (t.discount || 0), 0);
   const totalTx = filtered.length;
+  const txWithDiscountCount = filtered.filter(t => (t.discount || 0) > 0).length;
   const avgTx = totalTx > 0 ? Math.round(totalSales / totalTx) : 0;
   const totalItemsSold = filtered.reduce((s, t) => s + (t.items || []).reduce((a: number, i: any) => a + i.quantity, 0), 0);
 
   // Daily chart
   const dailyMap = filtered.reduce((acc: any, t: any) => {
     const d = format(new Date(t.date), 'yyyy-MM-dd');
-    if (!acc[d]) acc[d] = { date: d, omset: 0, count: 0 };
-    acc[d].omset += t.total;
+    if (!acc[d]) acc[d] = { date: d, omset: 0, count: 0, discount: 0 };
+    acc[d].omset += (t.total || 0);
     acc[d].count += 1;
+    acc[d].discount += (t.discount || 0);
     return acc;
   }, {});
   const dailyChart = Object.values(dailyMap).sort((a: any, b: any) => a.date.localeCompare(b.date));
@@ -122,12 +125,13 @@ export function ReportsModule() {
   const totalTax = filtered.reduce((s, t) => s + (t.tax || 0), 0);
   const totalServiceCharge = filtered.reduce((s, t) => s + (t.serviceCharge || 0), 0);
   const totalPassThrough = totalTax + totalServiceCharge;
+  const netSales = totalRevenue - totalDiscount;
   const totalGrossSales = totalRevenue + totalPassThrough;
-  const grossProfit = totalRevenue - totalCostOfGoods;
+  const grossProfit = netSales - totalCostOfGoods;
   const otherIncome = filteredFlow.filter(f => f.type === 'Pemasukan' && f.category !== 'Penjualan').reduce((s, f) => s + f.amount, 0);
   const totalExpenses = filteredFlow.filter(f => f.type === 'Pengeluaran').reduce((s, f) => s + f.amount, 0);
   const netProfit = grossProfit + otherIncome - totalExpenses;
-  const margin = totalRevenue > 0 ? ((grossProfit / totalRevenue) * 100).toFixed(1) : '0';
+  const margin = netSales > 0 ? ((grossProfit / netSales) * 100).toFixed(1) : '0';
 
   // Expense breakdown
   const expenseMap = filteredFlow.filter(f => f.type === 'Pengeluaran').reduce((acc: any, f: any) => {
@@ -178,6 +182,29 @@ export function ReportsModule() {
       .map(c => ({ ...c, avgTicket: c.txCount > 0 ? c.revenue / c.txCount : 0 }))
       .sort((a, b) => b.revenue - a.revenue);
   }, [filtered]);
+
+  // ─── Discount & promo breakdown by name ───
+  const discountBreakdown = useMemo(() => {
+    const acc: Record<string, { name: string; txCount: number; totalDiscount: number; totalRevenue: number; firstDate: string; lastDate: string }> = {};
+    filtered.forEach(t => {
+      if (!t.discount || t.discount <= 0) return;
+      const name = (t.discountName && String(t.discountName).trim()) || 'Tanpa Nama';
+      if (!acc[name]) acc[name] = { name, txCount: 0, totalDiscount: 0, totalRevenue: 0, firstDate: t.date, lastDate: t.date };
+      acc[name].txCount += 1;
+      acc[name].totalDiscount += t.discount || 0;
+      acc[name].totalRevenue += t.total || 0;
+      if (new Date(t.date) > new Date(acc[name].lastDate)) acc[name].lastDate = t.date;
+      if (new Date(t.date) < new Date(acc[name].firstDate)) acc[name].firstDate = t.date;
+    });
+    return Object.values(acc)
+      .map(d => ({ ...d, avgDiscount: d.txCount > 0 ? d.totalDiscount / d.txCount : 0 }))
+      .sort((a, b) => b.totalDiscount - a.totalDiscount);
+  }, [filtered]);
+  const avgDiscountPerTx = txWithDiscountCount > 0 ? totalDiscount / txWithDiscountCount : 0;
+  const discountedRevenue = useMemo(
+    () => filtered.filter(t => (t.discount || 0) > 0).reduce((s, t) => s + (t.total || 0), 0),
+    [filtered],
+  );
 
   // ─── Customer analytics ───
   const WALK_IN_NAMES = new Set(['Walk-In', 'Walk-In Customer', '']);
@@ -265,6 +292,7 @@ export function ReportsModule() {
     { id: 'products', label: 'Produk' },
     { id: 'categories', label: 'Kategori' },
     { id: 'payments', label: 'Pembayaran' },
+    { id: 'discounts', label: 'Diskon & Promo' },
     { id: 'cashiers', label: 'Kasir' },
     { id: 'customers', label: 'Pelanggan' },
     { id: 'stock', label: 'Stok' },
@@ -334,9 +362,11 @@ export function ReportsModule() {
       {activeTab === 'overview' && (
         <div className="space-y-6">
           {/* KPI Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
             <KPICard icon={DollarSign} label="Total Omset" value={fmt(totalSales)} color="indigo"
               sub={`Rata-rata ${fmt(avgTx)} / transaksi`} trend={totalSales > 0 ? 'up' : undefined} />
+            <KPICard icon={Percent} label="Total Diskon" value={fmt(totalDiscount)} color="rose"
+              sub={`${txWithDiscountCount} transaksi`} />
             <KPICard icon={ShoppingCart} label="Transaksi" value={totalTx.toLocaleString()} color="cyan"
               sub={`${totalItemsSold} item terjual`} />
             <KPICard icon={TrendingUp} label="Laba Kotor" value={fmt(grossProfit)} color="emerald"
@@ -366,11 +396,18 @@ export function ReportsModule() {
                   <Tooltip
                     contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 13 }}
                     labelFormatter={l => format(new Date(l), 'EEEE, dd MMMM yyyy', { locale: idLocale })}
-                    formatter={(v: any, n: string) => [n === 'omset' ? fmt(v) : v, n === 'omset' ? 'Omset' : 'Transaksi']}
+                    formatter={(v: any, n: string) => {
+                      if (n === 'omset') return [fmt(v), 'Omset'];
+                      if (n === 'diskon') return [fmt(v), 'Diskon'];
+                      return [v, n];
+                    }}
                   />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Area yAxisId="left" type="monotone" dataKey="omset" name="Omset" fill="url(#omsetGrad)" stroke="#6366f1" strokeWidth={2.5} dot={false} />
                   <Bar yAxisId="right" dataKey="count" name="Transaksi" fill="#c7d2fe" radius={[4, 4, 0, 0]} barSize={16} />
+                  {totalDiscount > 0 && (
+                    <Bar yAxisId="left" dataKey="diskon" name="Diskon" fill="#fca5a5" radius={[2, 2, 0, 0]} barSize={10} />
+                  )}
                 </ComposedChart>
               </ResponsiveContainer>
             </CardContent>
@@ -614,6 +651,123 @@ export function ReportsModule() {
               </CardContent>
             </Card>
           </div>
+        </div>
+      )}
+
+      {/* ═══════ DISCOUNTS & PROMOS ═══════ */}
+      {activeTab === 'discounts' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <KPICard icon={Percent} label="Total Diskon" value={fmt(totalDiscount)} color="rose"
+              sub={`${txWithDiscountCount} dari ${totalTx} transaksi`} />
+            <KPICard icon={Tag} label="Jenis Diskon Terpakai" value={String(discountBreakdown.length)} color="indigo"
+              sub={discountBreakdown[0] ? `Teratas: ${discountBreakdown[0].name}` : 'Belum ada'} />
+            <KPICard icon={DollarSign} label="Avg Diskon / Transaksi" value={fmt(avgDiscountPerTx)} color="amber"
+              sub={txWithDiscountCount > 0 ? 'Per transaksi berdiskon' : 'Tidak ada diskon'} />
+            <KPICard icon={ShoppingCart} label="Omset Berdiskon" value={fmt(discountedRevenue)} color="emerald"
+              sub={totalSales > 0 ? `${((discountedRevenue / totalSales) * 100).toFixed(1)}% dari total omset` : '0% dari total omset'} />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Pangsa Diskon per Nama</CardTitle></CardHeader>
+              <CardContent className="h-[320px]">
+                {discountBreakdown.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={discountBreakdown} cx="50%" cy="50%" innerRadius={65} outerRadius={110} paddingAngle={4} dataKey="totalDiscount" cornerRadius={6}
+                        label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}>
+                        {discountBreakdown.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                      </Pie>
+                      <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 13 }}
+                        formatter={(v: any) => [fmt(v), 'Diskon']} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-muted-foreground/70 text-sm">Belum ada diskon pada periode ini</div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border border-border shadow-sm bg-card">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold text-foreground/80">Frekuensi Pemakaian</CardTitle></CardHeader>
+              <CardContent className="h-[320px]">
+                {discountBreakdown.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={discountBreakdown} layout="vertical" margin={{ top: 5, right: 10, bottom: 5, left: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgb(148 163 184 / 0.25)" />
+                      <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#475569' }} width={120} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 12 }}
+                        formatter={(v: any) => [v, 'Transaksi']} />
+                      <Bar dataKey="txCount" name="Transaksi" radius={[0, 6, 6, 0]} barSize={18}>
+                        {discountBreakdown.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-muted-foreground/70 text-sm">Belum ada diskon pada periode ini</div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="border border-border shadow-sm overflow-hidden bg-card">
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50">
+                    <TableHead className="w-8 font-semibold">#</TableHead>
+                    <TableHead className="font-semibold">Nama Diskon / Promo</TableHead>
+                    <TableHead className="text-center font-semibold">Transaksi</TableHead>
+                    <TableHead className="text-right font-semibold">Total Diskon</TableHead>
+                    <TableHead className="text-right font-semibold">Avg / Transaksi</TableHead>
+                    <TableHead className="text-right font-semibold">Omset Setelah Diskon</TableHead>
+                    <TableHead className="text-right font-semibold">Pangsa Diskon</TableHead>
+                    <TableHead className="font-semibold">Terakhir Dipakai</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {discountBreakdown.map((d: any, i) => (
+                    <TableRow key={d.name} className="hover:bg-rose-50/50">
+                      <TableCell className="text-muted-foreground/70 font-medium">{i + 1}</TableCell>
+                      <TableCell className="font-medium flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: PALETTE[i % PALETTE.length] }} />
+                        {d.name}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <span className="inline-flex items-center justify-center bg-rose-100 text-rose-700 text-xs font-bold w-8 h-6 rounded-md">
+                          {d.txCount}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right font-semibold text-rose-600">-{fmt(d.totalDiscount)}</TableCell>
+                      <TableCell className="text-right">{fmt(d.avgDiscount)}</TableCell>
+                      <TableCell className="text-right">{fmt(d.totalRevenue)}</TableCell>
+                      <TableCell className="text-right text-muted-foreground text-sm">
+                        {totalDiscount > 0 ? ((d.totalDiscount / totalDiscount) * 100).toFixed(1) : '0'}%
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {format(new Date(d.lastDate), 'dd MMM yyyy', { locale: idLocale })}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {discountBreakdown.length > 0 && (
+                    <TableRow className="bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-600 hover:to-red-600">
+                      <TableCell colSpan={2} className="font-bold text-white">Total</TableCell>
+                      <TableCell className="text-center font-bold text-white">{txWithDiscountCount}</TableCell>
+                      <TableCell className="text-right font-bold text-white">-{fmt(totalDiscount)}</TableCell>
+                      <TableCell className="text-right font-bold text-white">{fmt(avgDiscountPerTx)}</TableCell>
+                      <TableCell className="text-right font-bold text-white">{fmt(discountedRevenue)}</TableCell>
+                      <TableCell colSpan={2} />
+                    </TableRow>
+                  )}
+                  {discountBreakdown.length === 0 && (
+                    <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground/70 py-10">Belum ada transaksi berdiskon pada periode ini</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
         </div>
       )}
 
@@ -1036,8 +1190,9 @@ export function ReportsModule() {
       {activeTab === 'profit' && (
         <div className="space-y-6">
           {/* P&L Summary Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <KPICard icon={DollarSign} label="Pendapatan" value={fmt(totalRevenue)} color="indigo" />
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+            <KPICard icon={DollarSign} label="Pendapatan Kotor" value={fmt(totalRevenue)} color="indigo" />
+            <KPICard icon={TrendingUp} label="Total Diskon" value={fmt(totalDiscount)} color="rose" sub={`${txWithDiscountCount} transaksi dengan diskon`} />
             <KPICard icon={Package} label="Harga Pokok" value={fmt(totalCostOfGoods)} color="slate" />
             <KPICard icon={TrendingUp} label="Laba Kotor" value={fmt(grossProfit)} color="emerald"
               sub={`Margin ${margin}%`} trend={grossProfit >= 0 ? 'up' : 'down'} />
@@ -1053,8 +1208,12 @@ export function ReportsModule() {
               </CardHeader>
               <CardContent className="pt-5 space-y-5">
                 <PLSection title="Penjualan" items={[
-                  { label: 'Pendapatan Penjualan', value: totalRevenue },
-                  { label: 'Harga Pokok Penjualan', value: -totalCostOfGoods },
+                  { label: 'Pendapatan Penjualan (Gross)', value: totalRevenue },
+                  { label: `Diskon & Promo`, value: -totalDiscount },
+                ]} total={{ label: 'Penjualan Bersih (Net)', value: netSales }} color="emerald" />
+
+                <PLSection title="Harga Pokok" items={[
+                  { label: 'Harga Pokok Penjualan (HPP)', value: -totalCostOfGoods },
                 ]} total={{ label: 'Laba Kotor', value: grossProfit }} color="emerald" />
 
                 {totalPassThrough > 0 && (

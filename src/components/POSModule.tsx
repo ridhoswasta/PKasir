@@ -6,7 +6,7 @@ import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Plus, Minus, Trash2, CreditCard, Banknote, QrCode, Coffee, ShoppingCart, User, Armchair, Printer, CheckCircle2, UtensilsCrossed, Monitor, StickyNote, UserPlus, ChevronDown, Phone, X, Calculator, PauseCircle, Clock, PlayCircle, BookOpen } from 'lucide-react';
+import { Search, Plus, Minus, Trash2, CreditCard, Banknote, QrCode, Coffee, ShoppingCart, User, Armchair, Printer, CheckCircle2, UtensilsCrossed, Monitor, StickyNote, UserPlus, ChevronDown, Phone, X, Calculator, PauseCircle, Clock, PlayCircle, BookOpen, Percent, Tag } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { invoke } from '@tauri-apps/api/core';
@@ -58,6 +58,8 @@ export function POSModule() {
   const [isHeldListOpen, setIsHeldListOpen] = useState(false);
   const [savingHold, setSavingHold] = useState(false);
   const [isShowMenuOpen, setIsShowMenuOpen] = useState(false);
+  const [activeDiscounts, setActiveDiscounts] = useState<any[]>([]);
+  const [selectedDiscount, setSelectedDiscount] = useState<any>(null);
   const displayChannelRef = useRef<BroadcastChannel | null>(null);
   const displayStateRef = useRef<any>({});
   const [lastPaymentForDisplay, setLastPaymentForDisplay] = useState<{ txId: string; total: number } | null>(null);
@@ -74,6 +76,7 @@ export function POSModule() {
     refreshSettings();
     invoke('get_customers').then(setCustomers).catch(() => {});
     refreshHeldOrders();
+    invoke<any[]>('get_active_discounts').then(setActiveDiscounts).catch(() => {});
 
     const onUpdate = () => refreshSettings();
     window.addEventListener('settings-updated', onUpdate);
@@ -88,13 +91,16 @@ export function POSModule() {
   );
 
   const addToCart = (product: any, variant?: any) => {
+    if (product.stock === 0) return;
     playAddToCart();
     setCart(prev => {
       const existing = prev.find(item => item.productId === product.id && item.variantName === variant?.name);
       if (existing) {
+        const newQty = existing.quantity + 1;
+        if (newQty > product.stock) return prev;
         return prev.map(item => 
           item.productId === product.id && item.variantName === variant?.name
-            ? { ...item, quantity: item.quantity + 1 }
+            ? { ...item, quantity: newQty }
             : item
         );
       }
@@ -113,9 +119,14 @@ export function POSModule() {
   const updateQuantity = (index: number, delta: number) => {
     setCart(prev => {
       const newCart = [...prev];
-      newCart[index].quantity += delta;
-      if (newCart[index].quantity <= 0) {
+      const product = products.find(p => p.id === newCart[index].productId);
+      const newQty = newCart[index].quantity + delta;
+      if (newQty <= 0) {
         newCart.splice(index, 1);
+      } else if (product && newQty > product.stock) {
+        return prev;
+      } else {
+        newCart[index].quantity = newQty;
       }
       return newCart;
     });
@@ -153,6 +164,8 @@ export function POSModule() {
         serviceCharge: last.serviceCharge || 0,
         serviceRate: settings.serviceCharge,
         total: last.total || 0,
+        discount: last.discount || undefined,
+        discountName: last.discountName || undefined,
         paymentMethod: last.paymentMethod,
         amountPaid: last.amountPaid,
         change: last.change,
@@ -260,7 +273,13 @@ export function POSModule() {
   const tax = subtotal * (settings.taxRate / 100);
   const serviceCharge = subtotal * (settings.serviceCharge / 100);
   const total = subtotal + tax + serviceCharge;
-  const change = typeof amountPaid === 'number' ? amountPaid - total : 0;
+  const discountAmount = selectedDiscount
+    ? (selectedDiscount.type === 'percentage'
+        ? subtotal * (selectedDiscount.value / 100)
+        : Math.min(selectedDiscount.value, total))
+    : 0;
+  const discountedTotal = Math.max(0, total - discountAmount);
+  const change = typeof amountPaid === 'number' ? amountPaid - discountedTotal : 0;
 
   // ─── Customer Display: BroadcastChannel sync ───
   // Keep displayStateRef current so the 'ready' handler can send latest state
@@ -269,14 +288,17 @@ export function POSModule() {
       cart: cart.map((i) => ({ name: i.name, variantName: i.variantName, quantity: i.quantity, price: i.price, note: i.note, image: i.image })),
       subtotal, tax, taxRate: settings.taxRate || 0,
       serviceCharge, serviceRate: settings.serviceCharge || 0,
-      total,
+      total: discountedTotal,
+      discountAmount, discountName: selectedDiscount?.name,
       customer: selectedCustomer !== 'Walk-In Customer' ? selectedCustomer : undefined,
       tableName: selectedTable || undefined,
       logo: settings.logo,
       header: (settings.receiptHeader || '').split('\n')[0] || '',
+      displayPhotos: settings.displayPhotos || [],
+      displaySlideshowInterval: settings.displaySlideshowInterval || 5,
       lastPayment: lastPaymentForDisplay,
       qrisPayment: isQrisDialogOpen
-        ? { total, qrisImage: settings.qrisImage || '' }
+        ? { total: discountedTotal, qrisImage: settings.qrisImage || '' }
         : null,
       showMenu: isShowMenuOpen
         ? {
@@ -292,7 +314,7 @@ export function POSModule() {
           }
         : null,
     };
-  }, [cart, subtotal, tax, serviceCharge, total, selectedCustomer, selectedTable, settings, lastPaymentForDisplay, isQrisDialogOpen, isShowMenuOpen, products]);
+  }, [cart, subtotal, tax, serviceCharge, discountedTotal, discountAmount, selectedDiscount, selectedCustomer, selectedTable, settings, lastPaymentForDisplay, isQrisDialogOpen, isShowMenuOpen, products]);
 
   // Set up channel once; broadcast on state changes + respond to 'ready'
   useEffect(() => {
@@ -309,7 +331,7 @@ export function POSModule() {
   // Broadcast whenever displayable state changes
   useEffect(() => {
     displayChannelRef.current?.postMessage({ type: 'update', data: displayStateRef.current });
-  }, [cart, subtotal, tax, serviceCharge, total, selectedCustomer, selectedTable, settings, lastPaymentForDisplay, isQrisDialogOpen, isShowMenuOpen, products]);
+  }, [cart, subtotal, tax, serviceCharge, discountedTotal, discountAmount, selectedDiscount, selectedCustomer, selectedTable, settings, lastPaymentForDisplay, isQrisDialogOpen, isShowMenuOpen, products]);
 
   const handleQuickAddCustomer = async () => {
     const name = quickCustomerName.trim();
@@ -366,14 +388,15 @@ export function POSModule() {
           subtotal,
           tax,
           serviceCharge,
-          total,
+          total: discountedTotal,
         },
       });
-      logActivity('Tahan Pesanan', `${cart.length} item`, `Total: Rp ${total.toLocaleString('id-ID')}`);
+      logActivity('Tahan Pesanan', `${cart.length} item`, `Total: Rp ${discountedTotal.toLocaleString('id-ID')}`);
       toast.success('Pesanan ditahan. Bisa dilanjutkan nanti.');
       refreshHeldOrders();
       // Clear cart
       setCart([]);
+      setSelectedDiscount(null);
       setSelectedCustomer('Walk-In Customer');
       setSelectedTable('');
       setHoldLabel('');
@@ -453,28 +476,32 @@ export function POSModule() {
     setProcessing(true);
 
     try {
+      const finalTotal = paidAmount === undefined ? discountedTotal : discountedTotal; // use discounted for non-cash
       const transaction: any = await invoke('create_transaction', {
         input: {
           items: cart,
           subtotal,
           tax,
           serviceCharge,
-          total,
+          total: discountedTotal,
           paymentMethod,
-          amountPaid: paidAmount || total,
+          amountPaid: paidAmount || discountedTotal,
           change: changeAmount || 0,
           customer: selectedCustomer,
           tableName: selectedTable || null,
           note: note || null,
           cashier: user?.displayName || null,
+          discount: discountAmount || 0,
+          discountId: selectedDiscount?.id || null,
+          discountName: selectedDiscount?.name || null,
         }
       });
 
-      logActivity('Transaksi Baru', `#${transaction.id}`, `Total: Rp ${total.toLocaleString('id-ID')}, ${paymentMethod}`);
+      logActivity('Transaksi Baru', `#${transaction.id}`, `Total: Rp ${discountedTotal.toLocaleString('id-ID')}, ${paymentMethod}${selectedDiscount ? ` (Diskon: ${selectedDiscount.name})` : ''}`);
 
       {
         // Show prominent success overlay
-        setSuccessOverlay({ show: true, txId: transaction.id, total });
+        setSuccessOverlay({ show: true, txId: transaction.id, total: discountedTotal });
         setTimeout(() => setSuccessOverlay(null), 3000);
 
         // Also signal Customer Display
@@ -509,7 +536,9 @@ export function POSModule() {
             taxRate: settings.taxRate,
             serviceCharge,
             serviceRate: settings.serviceCharge,
-            total,
+            total: discountedTotal,
+            discount: discountAmount || undefined,
+            discountName: selectedDiscount?.name,
             paymentMethod,
             amountPaid: paidAmount || total,
             change: changeAmount || 0,
@@ -529,6 +558,7 @@ export function POSModule() {
               toast.error('Cetak gagal: ' + (e.message || e));
             }
             setCart([]);
+            setSelectedDiscount(null);
             setSelectedCustomer('Walk-In Customer');
             setSelectedTable('');
             invoke('get_products').then(setProducts).catch(() => {});
@@ -551,6 +581,7 @@ export function POSModule() {
           }
 
           setCart([]);
+          setSelectedDiscount(null);
           setSelectedCustomer('Walk-In Customer');
           setSelectedTable('');
           invoke('get_products').then(setProducts).catch(() => {});
@@ -570,7 +601,9 @@ export function POSModule() {
                   variantName: it.variantName,
                   note: it.note,
                 })),
-                subtotal, tax, serviceCharge, total,
+                subtotal, tax, serviceCharge, total: discountedTotal,
+                discount: discountAmount || undefined,
+                discountName: selectedDiscount?.name,
                 paymentMethod,
                 amountPaid: paidAmount || total,
                 change: changeAmount || 0,
@@ -585,6 +618,7 @@ export function POSModule() {
           }
 
           setCart([]);
+          setSelectedDiscount(null);
           setSelectedCustomer('Walk-In Customer');
           setSelectedTable('');
           invoke('get_products').then(setProducts).catch(() => {});
@@ -625,8 +659,9 @@ export function POSModule() {
                 <div class="item"><span>Subtotal</span><span>Rp ${(subtotal || 0).toLocaleString('id-ID')}</span></div>
                 <div class="item"><span>Pajak (${settings.taxRate}%)</span><span>Rp ${(tax || 0).toLocaleString('id-ID')}</span></div>
                 <div class="item"><span>Layanan (${settings.serviceCharge}%)</span><span>Rp ${(serviceCharge || 0).toLocaleString('id-ID')}</span></div>
+                ${discountAmount > 0 ? `<div class="item"><span>Diskon${selectedDiscount?.name ? ` (${selectedDiscount.name})` : ''}</span><span class="text-red-500">-Rp ${(discountAmount || 0).toLocaleString('id-ID')}</span></div>` : ''}
                 <div class="divider"></div>
-                <div class="item total"><span>Total</span><span>Rp ${(total || 0).toLocaleString('id-ID')}</span></div>
+                <div class="item total"><span>Total</span><span>Rp ${(discountedTotal || 0).toLocaleString('id-ID')}</span></div>
                 <div class="item"><span>Pembayaran</span><span>${paymentMethod}</span></div>
                 ${paymentMethod === 'Tunai' ? `
                   <div class="item"><span>Tunai</span><span>Rp ${(paidAmount || 0).toLocaleString('id-ID')}</span></div>
@@ -642,6 +677,7 @@ export function POSModule() {
         }
 
         setCart([]);
+        setSelectedDiscount(null);
         setSelectedCustomer('Walk-In Customer');
         setSelectedTable('');
         invoke('get_products').then(setProducts).catch(() => {});
@@ -717,7 +753,8 @@ export function POSModule() {
             {filteredProducts.map(product => (
               <button
                 key={product.id}
-                className="group relative aspect-square flex flex-col bg-card rounded-2xl border border-border overflow-hidden text-left transition-all duration-200 hover:border-foreground/30 hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98]"
+                disabled={product.stock === 0}
+                className="group relative aspect-square flex flex-col bg-card rounded-2xl border border-border overflow-hidden text-left transition-all duration-200 hover:border-foreground/30 hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => {
                   if (product.variants?.length > 0) setVariantProduct(product);
                   else addToCart(product);
@@ -731,7 +768,11 @@ export function POSModule() {
                       <Coffee className="w-10 h-10 text-muted-foreground/40 group-hover:text-muted-foreground/60 transition-colors" />
                     </div>
                   )}
-                  {product.stock <= 10 && (
+                  {product.stock === 0 ? (
+                    <span className="absolute top-2 right-2 bg-gray-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md">
+                      Habis
+                    </span>
+                  ) : product.stock <= 10 && (
                     <span className="absolute top-2 right-2 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md">
                       Sisa {product.stock}
                     </span>
@@ -996,11 +1037,71 @@ export function POSModule() {
                 <span className="text-foreground/85">Rp {(serviceCharge || 0).toLocaleString('id-ID')}</span>
               </div>
             )}
+            {discountAmount > 0 && (
+              <div className="flex justify-between text-destructive font-semibold">
+                <span className="flex items-center gap-1">
+                  <Percent className="w-3.5 h-3.5" />
+                  Diskon{selectedDiscount ? ` (${selectedDiscount.name})` : ''}
+                </span>
+                <span>-Rp {discountAmount.toLocaleString('id-ID')}</span>
+              </div>
+            )}
             <div className="border-t border-border pt-2 mt-2 flex justify-between items-baseline">
               <span className="text-base font-bold text-foreground/80">Total</span>
-              <span className="text-xl font-extrabold text-foreground">Rp {(total || 0).toLocaleString('id-ID')}</span>
+              <div className="text-right">
+                {discountAmount > 0 && (
+                  <span className="text-xs text-muted-foreground line-through block">Rp {(total || 0).toLocaleString('id-ID')}</span>
+                )}
+                <span className="text-xl font-extrabold text-foreground">Rp {(discountedTotal || 0).toLocaleString('id-ID')}</span>
+              </div>
             </div>
           </div>
+
+          {/* Discount Selector */}
+          {activeDiscounts.length > 0 && (
+            <div className="px-5 py-0 shrink-0">
+              {selectedDiscount ? (
+                <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
+                  <Tag className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-emerald-700 truncate">{selectedDiscount.name}</p>
+                    <p className="text-xs text-emerald-600/80">
+                      {selectedDiscount.type === 'percentage'
+                        ? `Diskon ${selectedDiscount.value}%`
+                        : `Potongan Rp ${(selectedDiscount.value || 0).toLocaleString('id-ID')}`}
+                      {' '}- Rp {discountAmount.toLocaleString('id-ID')}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 p-1 rounded-md hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
+                    onClick={() => setSelectedDiscount(null)}
+                    title="Hapus diskon"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {activeDiscounts.map((d: any) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 hover:border-amber-500/40 text-amber-700 dark:text-amber-400 text-xs font-semibold transition-colors"
+                      onClick={() => setSelectedDiscount(d)}
+                      title={`${d.type === 'percentage' ? `${d.value}%` : `Rp ${d.value}`} — ${d.description || ''}`}
+                    >
+                      <Percent className="w-3 h-3" />
+                      {d.name}
+                      <span className="opacity-70">
+                        ({d.type === 'percentage' ? `${d.value}%` : `Rp ${d.value}`})
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <button
             className="w-full flex items-center justify-center gap-2 h-10 rounded-xl bg-card hover:bg-amber-500/10 border border-border hover:border-amber-500/50 text-foreground/75 hover:text-amber-600 text-xs font-semibold transition-colors disabled:opacity-40 disabled:pointer-events-none"
@@ -1057,7 +1158,7 @@ export function POSModule() {
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 space-y-1">
               <p className="font-semibold">Ringkasan pesanan</p>
               <div className="flex justify-between"><span>Item</span><span>{cart.reduce((s, i) => s + i.quantity, 0)} pcs</span></div>
-              <div className="flex justify-between font-bold"><span>Total</span><span>Rp {total.toLocaleString('id-ID')}</span></div>
+              <div className="flex justify-between font-bold"><span>Total</span><span>Rp {discountedTotal.toLocaleString('id-ID')}</span></div>
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-600">Label Pesanan <span className="text-slate-400 font-normal">(opsional)</span></label>
@@ -1446,7 +1547,7 @@ export function POSModule() {
           <div className="space-y-5 py-2">
             <div className="flex justify-between items-center text-lg">
               <span className="font-medium text-muted-foreground">Total Tagihan:</span>
-              <span className="font-bold text-foreground text-2xl">Rp {(total || 0).toLocaleString('id-ID')}</span>
+              <span className="font-bold text-foreground text-2xl">Rp {(discountedTotal || 0).toLocaleString('id-ID')}</span>
             </div>
 
             <div className="space-y-2">
@@ -1558,7 +1659,7 @@ export function POSModule() {
           <div className="space-y-5 py-2">
             <div className="flex justify-between items-center text-lg">
               <span className="font-medium text-muted-foreground">Total Tagihan:</span>
-              <span className="font-bold text-foreground text-2xl">Rp {(total || 0).toLocaleString('id-ID')}</span>
+              <span className="font-bold text-foreground text-2xl">Rp {(discountedTotal || 0).toLocaleString('id-ID')}</span>
             </div>
             <div className="rounded-md bg-blue-500/10 border border-blue-500/30 p-3 text-sm text-blue-700 dark:text-blue-300">
               Pastikan pelanggan sudah menyelesaikan pembayaran QRIS sebelum mengkonfirmasi.
@@ -1578,7 +1679,7 @@ export function POSModule() {
             <Button
               className="bg-blue-600 hover:bg-blue-700 text-white"
               disabled={processing}
-              onClick={() => handleCheckout('QRIS', total, 0, paymentNote)}
+              onClick={() => handleCheckout('QRIS', discountedTotal, 0, paymentNote)}
             >
               {processing ? 'Memproses...' : 'Konfirmasi Pembayaran QRIS'}
             </Button>
@@ -1598,7 +1699,7 @@ export function POSModule() {
           <div className="space-y-5 py-2">
             <div className="flex justify-between items-center text-lg">
               <span className="font-medium text-muted-foreground">Total Tagihan:</span>
-              <span className="font-bold text-foreground text-2xl">Rp {(total || 0).toLocaleString('id-ID')}</span>
+              <span className="font-bold text-foreground text-2xl">Rp {(discountedTotal || 0).toLocaleString('id-ID')}</span>
             </div>
             <div className="rounded-md bg-indigo-500/10 border border-indigo-500/30 p-3 text-sm text-indigo-700 dark:text-indigo-300">
               Pastikan transaksi kartu (debit/kredit) berhasil di mesin EDC sebelum mengkonfirmasi.
@@ -1618,7 +1719,7 @@ export function POSModule() {
             <Button
               className="bg-indigo-600 hover:bg-indigo-700 text-white"
               disabled={processing}
-              onClick={() => handleCheckout('Kartu', total, 0, paymentNote)}
+              onClick={() => handleCheckout('Kartu', discountedTotal, 0, paymentNote)}
             >
               {processing ? 'Memproses...' : 'Konfirmasi Pembayaran Kartu'}
             </Button>

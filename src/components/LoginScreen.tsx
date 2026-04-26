@@ -4,21 +4,37 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Coffee, ShieldCheck, Briefcase, ShoppingCart, ArrowLeft, Eye, EyeOff, Loader2, Maximize, Minimize } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useAuth, type Role } from '../services/auth';
 
-const ROLES: { id: Role; label: string; sublabel: string; icon: any; color: string; bg: string; border: string }[] = [
+const ROLES: { id: Role; label: string; sublabel: string; icon: any; color: string; bg: string; border: string; hoverBg: string; hoverBorder: string }[] = [
   {
     id: 'admin', label: 'Admin', sublabel: 'Akses penuh & kelola pengguna',
-    icon: ShieldCheck, color: 'text-red-600', bg: 'bg-red-50 hover:bg-red-100', border: 'border-red-200 hover:border-red-400',
+    icon: ShieldCheck,
+    color: 'text-red-600 dark:text-red-400',
+    bg: 'bg-red-50 dark:bg-red-950/30',
+    border: 'border-red-200 dark:border-red-800/40',
+    hoverBg: 'hover:bg-red-100 dark:hover:bg-red-950/50',
+    hoverBorder: 'hover:border-red-400 dark:hover:border-red-700',
   },
   {
     id: 'manager', label: 'Manager', sublabel: 'Laporan, inventaris & operasional',
-    icon: Briefcase, color: 'text-blue-600', bg: 'bg-blue-50 hover:bg-blue-100', border: 'border-blue-200 hover:border-blue-400',
+    icon: Briefcase,
+    color: 'text-blue-600 dark:text-blue-400',
+    bg: 'bg-blue-50 dark:bg-blue-950/30',
+    border: 'border-blue-200 dark:border-blue-800/40',
+    hoverBg: 'hover:bg-blue-100 dark:hover:bg-blue-950/50',
+    hoverBorder: 'hover:border-blue-400 dark:hover:border-blue-700',
   },
   {
     id: 'cashier', label: 'Kasir', sublabel: 'Point of Sale',
-    icon: ShoppingCart, color: 'text-emerald-600', bg: 'bg-emerald-50 hover:bg-emerald-100', border: 'border-emerald-200 hover:border-emerald-400',
+    icon: ShoppingCart,
+    color: 'text-emerald-600 dark:text-emerald-400',
+    bg: 'bg-emerald-50 dark:bg-emerald-950/30',
+    border: 'border-emerald-200 dark:border-emerald-800/40',
+    hoverBg: 'hover:bg-emerald-100 dark:hover:bg-emerald-950/50',
+    hoverBorder: 'hover:border-emerald-400 dark:hover:border-emerald-700',
   },
 ];
 
@@ -72,8 +88,8 @@ export function LoginScreen() {
   const roleInfo = ROLES.find(r => r.id === selectedRole);
 
   return (
-    <div className="absolute inset-0 z-[200] flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 overflow-auto">
-      {/* Full Screen toggle */}
+    <div className="absolute inset-0 z-[200] flex flex-col items-center justify-center bg-background overflow-auto">
+      {/* Full Screen toggle — matches Layout header style */}
       <button
         onClick={async () => {
           const fs = await appWindow.isFullscreen();
@@ -84,18 +100,20 @@ export function LoginScreen() {
             await appWindow.setFullscreen(false);
           }
         }}
-        className="absolute top-5 right-5 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white transition-colors backdrop-blur-sm"
+        className={cn(
+          "absolute top-5 right-5 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+          isFullScreen
+            ? "bg-destructive/15 text-destructive hover:bg-destructive/25"
+            : "bg-foreground/10 text-foreground/80 hover:bg-foreground/15 hover:text-foreground",
+        )}
       >
         {isFullScreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
         {isFullScreen ? 'Keluar Full Screen' : 'Full Screen'}
       </button>
 
-      {/* Background pattern */}
-      <div className="absolute inset-0 opacity-5">
-        <div className="absolute inset-0" style={{
-          backgroundImage: 'radial-gradient(circle at 1px 1px, white 1px, transparent 0)',
-          backgroundSize: '40px 40px',
-        }} />
+      {/* Subtle dot grid pattern */}
+      <div className="absolute inset-0 pointer-events-none opacity-[0.025] dark:opacity-[0.04]">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,var(--foreground)_1px,transparent_0)] bg-[size:40px_40px]" />
       </div>
 
       <div className="relative z-10 w-full max-w-xl px-6 py-10 flex flex-col items-center">
@@ -104,21 +122,21 @@ export function LoginScreen() {
           <div className="bg-orange-500 rounded-2xl p-4 shadow-lg shadow-orange-500/20 mb-4">
             <Coffee className="w-10 h-10 text-white" strokeWidth={1.8} />
           </div>
-          <h1 className="text-3xl font-extrabold text-white tracking-tight">PKasir</h1>
-          <p className="text-slate-400 text-sm mt-1">Point of Sale System</p>
+          <h1 className="text-3xl font-extrabold text-foreground tracking-tight">PKasir</h1>
+          <p className="text-muted-foreground text-sm mt-1">Point of Sale System</p>
         </div>
 
         {!selectedRole ? (
           /* ====== Role Selection ====== */
           <div className="w-full space-y-5">
-            <p className="text-center text-slate-400 text-sm">Pilih level akses untuk masuk</p>
+            <p className="text-center text-muted-foreground text-sm">Pilih level akses untuk masuk</p>
             <div className="grid grid-cols-3 gap-3">
               {ROLES.map((r) => {
                 const Icon = r.icon;
                 return (
                   <Card
                     key={r.id}
-                    className={`cursor-pointer transition-all duration-200 border-2 ${r.border} ${r.bg} hover:scale-[1.03] hover:shadow-lg`}
+                    className={`cursor-pointer transition-all duration-200 border-2 ${r.border} ${r.hoverBorder} ${r.bg} ${r.hoverBg} hover:scale-[1.03] hover:shadow-lg`}
                     onClick={() => { setSelectedRole(r.id); setError(''); setUsername(''); setPassword(''); }}
                   >
                     <CardContent className="flex flex-col items-center py-7 px-3 gap-3">
@@ -127,15 +145,15 @@ export function LoginScreen() {
                       </div>
                       <div className="text-center">
                         <div className={`font-bold text-base ${r.color}`}>{r.label}</div>
-                        <div className="text-[11px] text-slate-500 mt-1 leading-tight">{r.sublabel}</div>
+                        <div className="text-[11px] text-muted-foreground mt-1 leading-tight">{r.sublabel}</div>
                       </div>
                     </CardContent>
                   </Card>
                 );
               })}
             </div>
-            <p className="text-center text-slate-600 text-xs mt-4">
-              Password default: <code className="bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded text-xs">000000</code>
+            <p className="text-center text-muted-foreground text-xs mt-4">
+              Password default: <code className="bg-muted text-foreground px-1.5 py-0.5 rounded text-xs">000000</code>
             </p>
           </div>
         ) : (
@@ -143,12 +161,12 @@ export function LoginScreen() {
           <div className="w-full max-w-sm">
             <button
               onClick={handleBack}
-              className="flex items-center gap-1.5 text-slate-400 hover:text-white text-sm mb-6 transition-colors"
+              className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-sm mb-6 transition-colors"
             >
               <ArrowLeft className="w-4 h-4" /> Kembali
             </button>
 
-            <Card className="border-slate-700 bg-slate-800/60 backdrop-blur-sm shadow-2xl">
+            <Card className="border-border bg-card shadow-lg">
               <CardContent className="pt-7 pb-6 px-6">
                 <div className="flex items-center gap-3 mb-6">
                   {roleInfo && (
@@ -157,26 +175,26 @@ export function LoginScreen() {
                     </div>
                   )}
                   <div>
-                    <h2 className="text-lg font-bold text-white">Masuk sebagai {roleInfo?.label}</h2>
-                    <p className="text-xs text-slate-400">{roleInfo?.sublabel}</p>
+                    <h2 className="text-lg font-bold text-foreground">Masuk sebagai {roleInfo?.label}</h2>
+                    <p className="text-xs text-muted-foreground">{roleInfo?.sublabel}</p>
                   </div>
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-4">
                   {selectedRole !== 'admin' && (
                     <div className="space-y-2">
-                      <Label className="text-slate-300">Username</Label>
+                      <Label>Username</Label>
                       <Input
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         placeholder="Masukkan username"
                         autoFocus
-                        className="bg-slate-900/50 border-slate-600 text-white placeholder:text-slate-500 h-11"
+                        className="h-11"
                       />
                     </div>
                   )}
                   <div className="space-y-2">
-                    <Label className="text-slate-300">Password</Label>
+                    <Label>Password</Label>
                     <div className="relative">
                       <Input
                         type={showPassword ? 'text' : 'password'}
@@ -184,11 +202,11 @@ export function LoginScreen() {
                         onChange={(e) => setPassword(e.target.value)}
                         placeholder="Masukkan password"
                         autoFocus={selectedRole === 'admin'}
-                        className="bg-slate-900/50 border-slate-600 text-white placeholder:text-slate-500 h-11 pr-10"
+                        className="h-11 pr-10"
                       />
                       <button
                         type="button"
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                         onClick={() => setShowPassword(!showPassword)}
                       >
                         {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -197,7 +215,7 @@ export function LoginScreen() {
                   </div>
 
                   {error && (
-                    <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-sm text-red-400">
+                    <div className="bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2 text-sm text-destructive">
                       {error}
                     </div>
                   )}
@@ -219,7 +237,7 @@ export function LoginScreen() {
           </div>
         )}
 
-        <div className="mt-10 text-slate-600 text-xs">
+        <div className="mt-10 text-muted-foreground text-xs">
           &copy; {new Date().getFullYear()} PKasir &mdash; Point of Sale System
         </div>
       </div>

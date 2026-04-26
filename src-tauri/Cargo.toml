@@ -1,9 +1,9 @@
 [package]
 name = "pos-system"
 version = "0.1.0"
-description = "A POS System"
-authors = ["you"]
-edition = "2021"
+description = "A Full Featured Offline Cashier App"
+authors = ["Panuah Technology Intercontinental"]
+edition = "2024"
 
 [build-dependencies]
 tauri-build = { version = "2.4", features = [] }

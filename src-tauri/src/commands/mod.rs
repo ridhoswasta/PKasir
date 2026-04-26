@@ -10,3 +10,4 @@ pub mod activity_log;
 pub mod backup;
 pub mod held_orders;
 pub mod export;
+pub mod discounts;

@@ -16,6 +16,8 @@ import {
   Shield,
   Sun,
   Moon,
+  Clock,
+  Percent,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { invoke } from '@tauri-apps/api/core';
@@ -37,7 +39,13 @@ export function Layout({ children, activeTab, setActiveTab }: LayoutProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [now, setNow] = useState(() => new Date());
   const appWindow = getCurrentWindow();
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     appWindow.isFullscreen().then(setIsFullScreen);
@@ -87,6 +95,7 @@ export function Layout({ children, activeTab, setActiveTab }: LayoutProps) {
     { id: 'customers', label: 'Pelanggan', icon: Users },
     { id: 'settings', label: 'Pengaturan', icon: SettingsIcon },
     { id: 'users', label: 'Pengguna', icon: Shield },
+    { id: 'discounts', label: 'Diskon', icon: Percent },
   ];
 
   const fullLabelMap: Record<string, string> = {
@@ -100,6 +109,7 @@ export function Layout({ children, activeTab, setActiveTab }: LayoutProps) {
     customers: 'Pelanggan',
     settings: 'Pengaturan',
     users: 'Manajemen User',
+    discounts: 'Diskon & Promo',
   };
 
   const allowedTabs = user ? ROLE_TABS[user.role] || [] : [];
@@ -221,6 +231,16 @@ export function Layout({ children, activeTab, setActiveTab }: LayoutProps) {
           <h2 className="text-2xl font-bold text-foreground flex-1 tracking-tight">
             {fullLabelMap[activeTab] || 'PKasir'}
           </h2>
+          <div
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-foreground/5 text-foreground/80 border border-border/60"
+            title={now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            aria-label="Jam saat ini"
+          >
+            <Clock className="w-4 h-4 text-foreground/60" />
+            <span className="text-sm font-semibold tabular-nums tracking-tight">
+              {now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+            </span>
+          </div>
           <button
             onClick={toggle}
             className="p-2 rounded-lg text-foreground/70 hover:text-foreground hover:bg-foreground/10 transition-colors"

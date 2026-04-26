@@ -98,6 +98,19 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             serviceCharge REAL,
             total REAL
         );
+        CREATE TABLE IF NOT EXISTS discounts (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL CHECK(type IN ('percentage','fixed')),
+            value REAL NOT NULL,
+            startDate TEXT NOT NULL,
+            endDate TEXT NOT NULL,
+            productIds TEXT,
+            categoryFilter TEXT,
+            isActive INTEGER NOT NULL DEFAULT 1,
+            priority INTEGER NOT NULL DEFAULT 0,
+            description TEXT
+        );
         ",
     )?;
 
@@ -119,6 +132,8 @@ pub fn init_db(conn: &Connection) -> Result<()> {
         "ALTER TABLE settings ADD COLUMN lastBackupAt TEXT DEFAULT ''",
         "ALTER TABLE settings ADD COLUMN autoBackupIntervalSeconds INTEGER DEFAULT 0",
         "ALTER TABLE settings ADD COLUMN qrisImage TEXT DEFAULT ''",
+        "ALTER TABLE settings ADD COLUMN displayPhotos TEXT DEFAULT '[]'",
+        "ALTER TABLE settings ADD COLUMN displaySlideshowInterval INTEGER DEFAULT 5",
         "ALTER TABLE transactions ADD COLUMN tableName TEXT",
         "ALTER TABLE transactions ADD COLUMN note TEXT",
         "ALTER TABLE transactions ADD COLUMN cashier TEXT",
@@ -127,6 +142,10 @@ pub fn init_db(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date DESC)",
         "CREATE INDEX IF NOT EXISTS idx_money_flow_date ON money_flow(date DESC)",
         "CREATE INDEX IF NOT EXISTS idx_activity_log_date ON activity_log(date DESC)",
+        // Discount support on transactions
+        "ALTER TABLE transactions ADD COLUMN discount REAL DEFAULT 0",
+        "ALTER TABLE transactions ADD COLUMN discountId TEXT",
+        "ALTER TABLE transactions ADD COLUMN discountName TEXT",
     ];
     for m in migrations {
         let _ = conn.execute(m, []);
@@ -141,7 +160,7 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     if count == 0 {
         conn.execute(
             "INSERT INTO settings (id, taxRate, serviceCharge, printerName, paperWidth, receiptHeader, receiptFooter, logo, productCategories, flowCategories, productUnits, pointMultiplier)
-             VALUES ('default', 10, 5, 'POS-80', '80mm', 'CAFE POS\nJl. Sudirman No. 1\nJakarta', 'Terima Kasih\nSelamat Datang Kembali', '', 'Kopi,Non-Kopi,Makanan,Snack', 'Penjualan,Modal,Bahan Baku,Operasional,Gaji', 'Gelas,Piring,Pcs,Porsi', 1000)",
+             VALUES ('default', 10, 5, 'POS-58', '58mm', 'PKasir \nJl. Sudirman \nPekanbaru', 'Terima Kasih\nSelamat Datang Kembali', '', 'Kopi,Non-Kopi,Makanan,Snack', 'Penjualan,Modal,Bahan Baku,Operasional,Gaji', 'Pcs,Kg,Gr,Ltr,Btl', 1000)",
             [],
         )?;
     }

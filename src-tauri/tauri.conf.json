@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "PKasir - Point of Sale",
+        "title": "PKasir - A Full Featured Offline Cashier App",
         "width": 1200,
         "height": 800,
         "resizable": true,
@@ -31,8 +31,8 @@
     "icon": ["icons/icon.ico"],
     "publisher": "PKasir",
     "category": "Business",
-    "shortDescription": "PKasir - Point of Sale",
-    "longDescription": "A modern Point of Sale desktop application.",
+    "shortDescription": "PKasir - A Full Featured Offline Cashier App",
+    "longDescription": "A Full Featured Offline Cashier App.",
     "windows": {
       "nsis": {
         "installMode": "perMachine"

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Pagination } from './Pagination';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,6 +21,8 @@ export function MoneyFlowModule() {
   const [totalCount, setTotalCount] = useState(0);
   const [totalIncome, setTotalIncome] = useState(0);
   const [totalExpense, setTotalExpense] = useState(0);
+  const [totalDiscount, setTotalDiscount] = useState(0);
+  const [txsForDiscount, setTxsForDiscount] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<any>({});
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -47,7 +49,31 @@ export function MoneyFlowModule() {
 
   useEffect(() => {
     fetchPage();
+    invoke<any[]>('get_transactions').then((txs) => {
+      setTxsForDiscount(txs || []);
+      const disc = (txs || []).reduce((s: number, t: any) => s + (t.discount || 0), 0);
+      setTotalDiscount(disc);
+    }).catch(() => {});
   }, [page, pageSize]);
+
+  const discountMap = useMemo(() => {
+    const m = new Map<string, number>();
+    txsForDiscount.forEach((t: any) => {
+      if ((t.discount || 0) > 0) m.set(t.id, t.discount || 0);
+    });
+    return m;
+  }, [txsForDiscount]);
+
+  const mergedFlows = useMemo(() => {
+    return paginatedFlows.map(f => {
+      if (f.type === 'Pemasukan' && f.description?.startsWith('Transaksi #')) {
+        const txId = f.description.replace('Transaksi #', '').split(' [')[0];
+        const disc = discountMap.get(txId) || 0;
+        return { ...f, discountAmount: disc > 0 ? disc : undefined };
+      }
+      return { ...f };
+    });
+  }, [paginatedFlows, discountMap]);
 
   useEffect(() => {
     invoke('get_settings').then(setSettings).catch(() => {});
@@ -208,7 +234,7 @@ export function MoneyFlowModule() {
         </Dialog>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Saldo Saat Ini</CardTitle>
@@ -223,6 +249,14 @@ export function MoneyFlowModule() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">Rp {totalIncome.toLocaleString('id-ID')}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Diskon</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-red-500 dark:text-red-400">Rp {(totalDiscount || 0).toLocaleString('id-ID')}</div>
           </CardContent>
         </Card>
         <Card>
@@ -252,7 +286,7 @@ export function MoneyFlowModule() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {paginatedFlows.map((flow) => (
+              {mergedFlows.map((flow) => (
                 <TableRow key={flow.id}>
                   <TableCell>{format(new Date(flow.date), 'dd MMM yyyy HH:mm', { locale: id })}</TableCell>
                   <TableCell>{flow.description}</TableCell>
@@ -261,9 +295,20 @@ export function MoneyFlowModule() {
                     <Badge variant={flow.type === 'Pemasukan' ? 'default' : 'destructive'} className={flow.type === 'Pemasukan' ? 'bg-emerald-500' : ''}>
                       {flow.type}
                     </Badge>
+                    {flow.description?.includes('[Diskon:') && (
+                      <Badge className="ml-1 bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 text-xs">Diskon</Badge>
+                    )}
                   </TableCell>
                   <TableCell className="text-right font-medium">
-                    Rp {flow.amount.toLocaleString('id-ID')}
+                    {flow.discountAmount ? (
+                      <div>
+                        <span className="text-muted-foreground line-through text-xs block">Rp {(flow.amount + flow.discountAmount).toLocaleString('id-ID')}</span>
+                        <span className="block">Rp {flow.amount.toLocaleString('id-ID')}</span>
+                        <span className="text-red-500 text-xs block">Diskon -Rp {flow.discountAmount.toLocaleString('id-ID')}</span>
+                      </div>
+                    ) : (
+                      <span>Rp {flow.amount.toLocaleString('id-ID')}</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     <Button variant="ghost" size="icon" onClick={() => handleDeleteFlow(flow.id)}>

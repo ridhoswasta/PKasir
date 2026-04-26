@@ -12,7 +12,9 @@
       "Bash(npx tauri:*)",
       "Bash(npm run *)",
       "Bash(git stash *)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(find E:\\\\\\\\Project\\\\\\\\PKasir -path \"*tauri-plugin-thermal-printer*\" -type d)"
     ]
   }
 }

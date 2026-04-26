@@ -80,6 +80,12 @@ fn main() {
             commands::held_orders::delete_held_order,
             // CSV Export
             commands::export::export_csv,
+            // Discounts
+            commands::discounts::get_discounts,
+            commands::discounts::get_active_discounts,
+            commands::discounts::create_discount,
+            commands::discounts::update_discount,
+            commands::discounts::delete_discount,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

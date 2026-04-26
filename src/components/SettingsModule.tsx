@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
-import { Upload, X, Printer, RefreshCw, Bluetooth, Volume2, VolumeX, Play, ScrollText, Trash2, Search, Keyboard, Database, Download, FolderOpen, HardDriveUpload, QrCode } from 'lucide-react';
+import { Upload, X, Printer, RefreshCw, Bluetooth, Volume2, VolumeX, Play, ScrollText, Trash2, Search, Keyboard, Database, Download, FolderOpen, HardDriveUpload, QrCode, Images, Settings } from 'lucide-react';
 import { toast } from 'sonner';
 import { invoke } from '@tauri-apps/api/core';
 import { listThermalPrinters, testThermal, isVirtualPrinter, htmlPrintReceipt, type PrinterInfo } from '../services/printer';
@@ -66,7 +66,8 @@ export function SettingsModule() {
     productCategories: [], flowCategories: [], productUnits: [], pointMultiplier: 1000,
     printerType: 'browser', printerIp: '', printerPort: 9100, printerCharset: 'CP437', printerOpenDrawer: 0,
     tauriPrinterName: '', tauriPrinterInterface: 'USB', tables: [], cartSound: 'scanner', virtualKeyboard: 0,
-    backupPath: '', autoBackupEnabled: 0, autoBackupPath: '', lastBackupAt: '', autoBackupIntervalSeconds: 0
+    backupPath: '', autoBackupEnabled: 0, autoBackupPath: '', lastBackupAt: '', autoBackupIntervalSeconds: 0,
+    displayPhotos: [], displaySlideshowInterval: 5,
   });
   const [testingPrint, setTestingPrint] = useState(false);
   const [discoveredPrinters, setDiscoveredPrinters] = useState<PrinterInfo[]>([]);
@@ -78,6 +79,7 @@ export function SettingsModule() {
   const [restoreRunning, setRestoreRunning] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const qrisInputRef = useRef<HTMLInputElement>(null);
+  const displayPhotosInputRef = useRef<HTMLInputElement>(null);
 
   const fetchBackupInfo = () => {
     invoke<{ dbPath: string; dbSize: number }>('get_backup_info').then(setBackupInfo).catch(() => {});
@@ -222,15 +224,53 @@ export function SettingsModule() {
     }
   };
 
+  const handleDisplayPhotosUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files: File[] = e.target.files ? Array.from(e.target.files) : [];
+    if (files.length === 0) return;
+    Promise.all(
+      files.map(
+        (file) =>
+          new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(file);
+          })
+      )
+    )
+      .then((dataUrls) => {
+        setSettings((prev: any) => ({
+          ...prev,
+          displayPhotos: [...(prev.displayPhotos || []), ...dataUrls],
+        }));
+      })
+      .catch(() => toast.error('Gagal memuat gambar'));
+    // Allow selecting the same file again later
+    e.target.value = '';
+  };
+
+  const removeDisplayPhoto = (idx: number) => {
+    setSettings((prev: any) => ({
+      ...prev,
+      displayPhotos: (prev.displayPhotos || []).filter((_: string, i: number) => i !== idx),
+    }));
+  };
+
   return (
     <div className="p-8 space-y-6 overflow-y-auto h-full">
       <h2 className="text-3xl font-bold text-foreground">Pengaturan</h2>
 
       <Tabs defaultValue="general" className="w-full max-w-4xl">
         <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="general">Umum & Kategori</TabsTrigger>
-          <TabsTrigger value="receipt">Pengaturan Struk</TabsTrigger>
-          <TabsTrigger value="system">Sistem</TabsTrigger>
+          <TabsTrigger value="general">
+            <Settings className="w-3.5 h-3.5 mr-1.5" />Umum & Kategori
+          </TabsTrigger>
+          <TabsTrigger value="receipt">
+            <Printer className="w-3.5 h-3.5 mr-1.5" />Pengaturan Struk
+          </TabsTrigger>
+          <TabsTrigger value="system">
+            <Settings className="w-3.5 h-3.5 mr-1.5" />Sistem
+          </TabsTrigger>
           <TabsTrigger value="backup" onClick={fetchBackupInfo}>
             <Database className="w-3.5 h-3.5 mr-1.5" />Backup
           </TabsTrigger>
@@ -320,6 +360,71 @@ export function SettingsModule() {
                 <p className="text-xs text-muted-foreground">
                   Daftar meja akan muncul sebagai pilihan di POS saat membuat pesanan.
                 </p>
+              </div>
+
+              <div className="border-t pt-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Images className="w-4 h-4 text-blue-600" />
+                  <h4 className="font-semibold">Slideshow Customer Display</h4>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Unggah beberapa foto (promo, menu unggulan, dsb). Foto akan diputar bergantian
+                  di panel kiri layar Customer Display selama keranjang masih kosong.
+                </p>
+
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    ref={displayPhotosInputRef}
+                    onChange={handleDisplayPhotosUpload}
+                  />
+                  <Button variant="outline" onClick={() => displayPhotosInputRef.current?.click()}>
+                    <Upload className="w-4 h-4 mr-2" />
+                    Tambah Foto
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    {(settings.displayPhotos || []).length} foto tersimpan
+                  </span>
+                </div>
+
+                {(settings.displayPhotos || []).length > 0 && (
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                    {(settings.displayPhotos || []).map((src: string, idx: number) => (
+                      <div
+                        key={idx}
+                        className="relative aspect-square rounded-lg overflow-hidden border border-border bg-muted/40 group"
+                      >
+                        <img src={src} alt={`Slide ${idx + 1}`} className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => removeDisplayPhoto(idx)}
+                          className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 hover:bg-red-500 transition-opacity flex items-center justify-center"
+                          title="Hapus foto"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="space-y-2 max-w-xs">
+                  <Label>Interval Pergantian (detik)</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={settings.displaySlideshowInterval ?? 5}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        displaySlideshowInterval: Math.max(1, Number(e.target.value) || 5),
+                      })
+                    }
+                  />
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -832,12 +937,12 @@ export function SettingsModule() {
               </div>
 
               {/* ─── Restore ─── */}
-              <div className="space-y-3 border border-red-200 rounded-lg p-4 bg-red-50/30">
+              <div className="space-y-3 border border-red-300 dark:border-red-800 rounded-lg p-4 bg-red-50/30 dark:bg-red-950/30">
                 <div className="flex items-center gap-2">
-                  <HardDriveUpload className="w-4 h-4 text-red-600" />
-                  <h4 className="font-semibold text-red-900">Restore dari Backup</h4>
+                  <HardDriveUpload className="w-4 h-4 text-red-600 dark:text-red-400" />
+                  <h4 className="font-semibold text-red-900 dark:text-red-400">Restore dari Backup</h4>
                 </div>
-                <div className="rounded-md bg-red-100 border border-red-300 p-2 text-xs text-red-800">
+                <div className="rounded-md bg-red-100 dark:bg-red-950 border border-red-300 dark:border-red-800 p-2 text-xs text-red-800 dark:text-red-300">
                   ⚠️ <b>Peringatan:</b> Restore akan <b>mengganti seluruh data</b> saat ini (produk, transaksi, pelanggan, pengaturan, dll.) dengan data dari file backup. Data yang ada akan <b>hilang</b>. Pastikan Anda sudah backup terlebih dahulu.
                 </div>
                 <Button

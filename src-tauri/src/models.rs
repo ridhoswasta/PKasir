@@ -31,6 +31,39 @@ pub struct ProductInput {
     pub variants: Option<serde_json::Value>,
 }
 
+// ── Discounts ────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Discount {
+    pub id: String,
+    pub name: String,
+    pub r#type: String,
+    pub value: f64,
+    pub start_date: String,
+    pub end_date: String,
+    pub product_ids: serde_json::Value,
+    pub category_filter: serde_json::Value,
+    pub is_active: i64,
+    pub priority: i64,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscountInput {
+    pub name: String,
+    pub r#type: String,
+    pub value: f64,
+    pub start_date: String,
+    pub end_date: String,
+    pub product_ids: Option<serde_json::Value>,
+    pub category_filter: Option<serde_json::Value>,
+    pub is_active: Option<i64>,
+    pub priority: Option<i64>,
+    pub description: Option<String>,
+}
+
 // ── Transactions ─────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -50,6 +83,9 @@ pub struct Transaction {
     pub table_name: Option<String>,
     pub note: Option<String>,
     pub cashier: Option<String>,
+    pub discount: Option<f64>,
+    pub discount_id: Option<String>,
+    pub discount_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,6 +103,9 @@ pub struct CreateTransactionInput {
     pub table_name: Option<String>,
     pub note: Option<String>,
     pub cashier: Option<String>,
+    pub discount: Option<f64>,
+    pub discount_id: Option<String>,
+    pub discount_name: Option<String>,
 }
 
 // ── Held Orders (Bayar Nanti) ────────────────────────────
@@ -156,6 +195,8 @@ pub struct Settings {
     pub last_backup_at: Option<String>,
     pub auto_backup_interval_seconds: Option<i64>,
     pub qris_image: Option<String>,
+    pub display_photos: Vec<String>,
+    pub display_slideshow_interval: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -189,6 +230,8 @@ pub struct SettingsInput {
     pub auto_backup_path: Option<String>,
     pub auto_backup_interval_seconds: Option<i64>,
     pub qris_image: Option<String>,
+    pub display_photos: Option<Vec<String>>,
+    pub display_slideshow_interval: Option<i64>,
 }
 
 // ── Users ────────────────────────────────────────────────
@@ -310,6 +353,8 @@ pub struct PrintReceiptInput {
     pub table_name: Option<String>,
     pub note: Option<String>,
     pub cashier: Option<String>,
+    pub discount: Option<f64>,
+    pub discount_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

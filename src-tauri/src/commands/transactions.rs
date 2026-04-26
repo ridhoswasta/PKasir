@@ -10,7 +10,7 @@ fn now_id() -> String {
 pub fn get_transactions(db: State<'_, AppDb>) -> Result<Vec<Transaction>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, date, subtotal, tax, serviceCharge, total, paymentMethod, amountPaid, change, customer, items, tableName, note, cashier FROM transactions ORDER BY date DESC")
+        .prepare("SELECT id, date, subtotal, tax, serviceCharge, total, paymentMethod, amountPaid, change, customer, items, tableName, note, cashier, discount, discountId, discountName FROM transactions ORDER BY date DESC")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -32,6 +32,9 @@ pub fn get_transactions(db: State<'_, AppDb>) -> Result<Vec<Transaction>, String
                 table_name: row.get(11)?,
                 note: row.get(12)?,
                 cashier: row.get(13)?,
+                discount: row.get(14).ok(),
+                discount_id: row.get(15).ok(),
+                discount_name: row.get(16).ok(),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -62,7 +65,7 @@ pub fn get_transactions_page(
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, date, subtotal, tax, serviceCharge, total, paymentMethod, amountPaid, change, customer, items, tableName, note, cashier
+            "SELECT id, date, subtotal, tax, serviceCharge, total, paymentMethod, amountPaid, change, customer, items, tableName, note, cashier, discount, discountId, discountName
              FROM transactions
              ORDER BY date DESC
              LIMIT ?1 OFFSET ?2",
@@ -89,6 +92,9 @@ pub fn get_transactions_page(
                 table_name: row.get(11)?,
                 note: row.get(12)?,
                 cashier: row.get(13)?,
+                discount: row.get(14).ok(),
+                discount_id: row.get(15).ok(),
+                discount_name: row.get(16).ok(),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -115,8 +121,8 @@ pub fn create_transaction(
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
     tx.execute(
-        "INSERT INTO transactions (id, date, subtotal, tax, serviceCharge, total, paymentMethod, amountPaid, change, customer, items, tableName, note, cashier) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
-        rusqlite::params![id, date, input.subtotal, input.tax, input.service_charge, input.total, input.payment_method, input.amount_paid, input.change, input.customer, items_json, input.table_name, input.note, input.cashier],
+        "INSERT INTO transactions (id, date, subtotal, tax, serviceCharge, total, paymentMethod, amountPaid, change, customer, items, tableName, note, cashier, discount, discountId, discountName) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+        rusqlite::params![id, date, input.subtotal, input.tax, input.service_charge, input.total, input.payment_method, input.amount_paid, input.change, input.customer, items_json, input.table_name, input.note, input.cashier, input.discount, input.discount_id, input.discount_name],
     ).map_err(|e| e.to_string())?;
 
     // Update stock for each item
@@ -134,11 +140,18 @@ pub fn create_transaction(
         }
     }
 
-    // Record income in money_flow
+    // Record income in money_flow — use NET amount received (total minus discount)
+    let discount_val = input.discount.unwrap_or(0.0);
+    let net_amount = input.total - discount_val;
     let flow_id = format!("{}_flow", id);
+    let desc = if discount_val > 0.0 {
+        format!("Transaksi #{} [Diskon: Rp {:.0}]", id, discount_val)
+    } else {
+        format!("Transaksi #{}", id)
+    };
     tx.execute(
         "INSERT INTO money_flow (id, date, type, category, amount, description) VALUES (?1,?2,?3,?4,?5,?6)",
-        rusqlite::params![flow_id, date, "Pemasukan", "Penjualan", input.total, format!("Transaksi #{}", id)],
+        rusqlite::params![flow_id, date, "Pemasukan", "Penjualan", net_amount, desc],
     ).map_err(|e| e.to_string())?;
 
     // Update customer points
@@ -151,7 +164,7 @@ pub fn create_transaction(
                     |r| r.get(0),
                 )
                 .unwrap_or(1000.0);
-            let earned = (input.total / point_multiplier).floor() as i64;
+            let earned = (net_amount / point_multiplier).floor() as i64;
             if earned > 0 {
                 tx.execute(
                     "UPDATE customers SET points = points + ?1 WHERE name = ?2",
@@ -179,6 +192,9 @@ pub fn create_transaction(
         table_name: input.table_name,
         note: input.note,
         cashier: input.cashier,
+        discount: input.discount,
+        discount_id: input.discount_id,
+        discount_name: input.discount_name,
     })
 }
 

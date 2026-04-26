@@ -20,7 +20,7 @@ export interface PrintJobRequest {
     cut_paper?: boolean;
     beep?: boolean;
     open_cash_drawer?: boolean;
-    code_page?: { codepage: number; encode: string; use_gbk: boolean };
+    code_page?: { code_page: number; encode: string; use_gbk: boolean };
   };
   sections: any[];
 }
@@ -41,12 +41,12 @@ export async function printThermal(job: PrintJobRequest): Promise<void> {
   const fn = m.print_thermal_printer || m.printThermalPrinter;
   const jobWithCP: PrintJobRequest = {
     ...job,
-    options: { code_page: { codepage: 0, encode: 'WINDOWS_1252', use_gbk: false }, ...job.options },
+    options: { code_page: DEFAULT_CODE_PAGE, ...job.options },
   };
   await fn(jobWithCP);
 }
 
-const DEFAULT_CODE_PAGE = { codepage: 0, encode: 'WINDOWS_1252', use_gbk: false };
+const DEFAULT_CODE_PAGE = { code_page: 0, encode: 'WINDOWS_1252', use_gbk: false };
 
 export async function testThermal(job: PrintJobRequest): Promise<void> {
   const m: any = await plugin();
@@ -110,6 +110,8 @@ export interface ReceiptInput {
   serviceCharge: number;
   serviceRate?: number;
   total: number;
+  discount?: number;
+  discountName?: string;
   paymentMethod: string;
   amountPaid?: number;
   change?: number;
@@ -146,6 +148,10 @@ export function buildReceiptSections(r: ReceiptInput): any[] {
   sections.push({ Line: { character: '-' } });
 
   sections.push({ Table: { columns: 2, body: [[txt('Subtotal'), txt(fmt(r.subtotal), right)]], truncate: true } });
+  if (r.discount && r.discount > 0) {
+    const discLabel = r.discountName ? `Diskon (${r.discountName})` : 'Diskon';
+    sections.push({ Table: { columns: 2, body: [[txt(discLabel), txt(`-${fmt(r.discount)}`, right)]], truncate: true } });
+  }
   if (r.tax) sections.push({ Table: { columns: 2, body: [[txt(`Pajak (${r.taxRate || 0}%)`), txt(fmt(r.tax), right)]], truncate: true } });
   if (r.serviceCharge) sections.push({ Table: { columns: 2, body: [[txt(`Layanan (${r.serviceRate || 0}%)`), txt(fmt(r.serviceCharge), right)]], truncate: true } });
   sections.push({ Line: { character: '-' } });
@@ -211,6 +217,7 @@ export function htmlPrintReceipt(
       ${itemRows}
       <div class="divider"></div>
       <div class="item"><span>Subtotal</span><span>${fmt(r.subtotal)}</span></div>
+      ${r.discount && r.discount > 0 ? `<div class="item"><span>Diskon${r.discountName ? ` (${r.discountName})` : ''}</span><span>-${fmt(r.discount)}</span></div>` : ''}
       ${r.tax ? `<div class="item"><span>Pajak (${r.taxRate || 0}%)</span><span>${fmt(r.tax)}</span></div>` : ''}
       ${r.serviceCharge ? `<div class="item"><span>Layanan (${r.serviceRate || 0}%)</span><span>${fmt(r.serviceCharge)}</span></div>` : ''}
       <div class="divider"></div>
