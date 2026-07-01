@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Coffee, ShoppingCart, CheckCircle2, Maximize, Minimize, QrCode, Smartphone, BookOpen, Image as ImageIcon } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { cn } from '@/lib/utils';
+import { QRCodeDisplay } from './QRCodeDisplay';
 
 interface CartItem {
   name: string;
@@ -34,10 +36,11 @@ interface DisplayState {
   tableName?: string;
   logo?: string;
   header?: string;
+  address?: string;
   displayPhotos?: string[];
   displaySlideshowInterval?: number;
   lastPayment?: { txId: string; total: number } | null;
-  qrisPayment?: { total: number; qrisImage?: string } | null;
+  qrisPayment?: { total: number; qrisImage?: string; qrisString?: string } | null;
   showMenu?: { categories: string[]; products: MenuProduct[] } | null;
 }
 
@@ -134,14 +137,19 @@ export function CustomerDisplay() {
       {/* Fullscreen toggle — subtle, top-right or top-left when fullscreen */}
       <button
         onClick={toggleFullScreen}
-        className={`absolute z-30 h-10 w-10 rounded-xl bg-card/80 hover:bg-card border border-border text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors backdrop-blur-sm opacity-60 hover:opacity-100 ${isFullScreen ? 'top-4 left-4' : 'top-4 right-4'}`}
+        aria-label={isFullScreen ? 'Keluar Full Screen' : 'Full Screen'}
+        className="absolute top-4 right-4 z-30 h-10 w-10 rounded-xl bg-card/80 hover:bg-card border border-border text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors backdrop-blur-sm opacity-60 hover:opacity-100"
         title={isFullScreen ? 'Keluar Full Screen (Esc)' : 'Full Screen'}
       >
         {isFullScreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
       </button>
 
-      {/* Header */}
-      <div className={`px-10 py-8 border-b border-border/70 flex items-center gap-5 bg-background ${isFullScreen ? 'pt-4 pl-20' : ''}`}>
+      {/* Header — always reserve right-side space for the floating fullscreen
+          button (pinned top-right) so it never overlaps the clock */}
+      <div className={cn(
+        'px-10 py-8 border-b border-border/70 flex items-center gap-5 bg-background pr-24',
+        isFullScreen && 'pt-4'
+      )}>
         {state.logo ? (
           <img src={state.logo} alt="Logo" className="h-16 object-contain" />
         ) : (
@@ -153,7 +161,11 @@ export function CustomerDisplay() {
           <h1 className="text-3xl font-extrabold tracking-tight text-foreground whitespace-pre-line">
             {state.header || 'Selamat Datang'}
           </h1>
-          <p className="text-muted-foreground text-sm mt-1">Silakan periksa pesanan Anda di layar ini</p>
+          {state.address ? (
+            <p className="text-muted-foreground text-sm mt-1 whitespace-pre-line">{state.address}</p>
+          ) : (
+            <p className="text-muted-foreground text-sm mt-1">Silakan periksa pesanan Anda di layar ini</p>
+          )}
         </div>
         <div className="text-right shrink-0">
           <div className="text-5xl font-bold tracking-tight text-foreground/90 tabular-nums" style={{ textShadow: '0 0 30px rgba(255,255,255,0.15)' }}>{timeStr}</div>
@@ -212,7 +224,7 @@ export function CustomerDisplay() {
                       <div className="text-sm text-muted-foreground mt-0.5">{item.variantName}</div>
                     )}
                     {item.note && (
-                      <div className="text-sm text-amber-700 italic mt-1">📝 {item.note}</div>
+                      <div className="text-sm text-warning italic mt-1">📝 {item.note}</div>
                     )}
                   </div>
                   <div className="text-right shrink-0">
@@ -296,7 +308,15 @@ export function CustomerDisplay() {
 
             {/* QR card — sized to viewport so it never clips */}
             <div className="bg-white rounded-3xl p-4 md:p-5 shadow-xl ring-1 ring-border">
-              {state.qrisPayment.qrisImage ? (
+              {state.qrisPayment.qrisString ? (
+                // Dynamic QRIS — render live QR code from the generated string
+                <QRCodeDisplay
+                  value={state.qrisPayment.qrisString}
+                  size={320}
+                  className="w-[min(60vh,320px)] h-[min(60vh,320px)] md:w-[min(55vh,380px)] md:h-[min(55vh,380px)]"
+                />
+              ) : state.qrisPayment.qrisImage ? (
+                // Static QRIS fallback — show the uploaded image
                 <img
                   src={state.qrisPayment.qrisImage}
                   alt="QRIS"
@@ -323,12 +343,12 @@ export function CustomerDisplay() {
 
       {/* Success overlay */}
       {showSuccess && (
-        <div className="fixed inset-0 bg-emerald-600/95 backdrop-blur-sm flex flex-col items-center justify-center z-50 animate-[fadeIn_0.3s_ease-out]">
-          <CheckCircle2 className="w-32 h-32 text-white drop-shadow-lg mb-6" strokeWidth={2} />
-          <div className="text-5xl font-extrabold text-white mb-2">Terima Kasih!</div>
-          <div className="text-emerald-100 text-lg">Pembayaran berhasil</div>
-          <div className="mt-6 text-4xl font-bold text-white">{fmt(showSuccess.total)}</div>
-          <div className="text-emerald-100 text-sm mt-3">Struk #{showSuccess.txId}</div>
+        <div className="fixed inset-0 bg-success/95 backdrop-blur-sm flex flex-col items-center justify-center z-50 animate-[fadeIn_0.3s_ease-out]">
+          <CheckCircle2 className="w-32 h-32 text-success-foreground drop-shadow-lg mb-6" strokeWidth={2} />
+          <div className="text-5xl font-extrabold text-success-foreground mb-2">Terima Kasih!</div>
+          <div className="text-success-foreground/80 text-lg">Pembayaran berhasil</div>
+          <div className="mt-6 text-4xl font-bold text-success-foreground">{fmt(showSuccess.total)}</div>
+          <div className="text-success-foreground/80 text-sm mt-3">Struk #{showSuccess.txId}</div>
         </div>
       )}
 

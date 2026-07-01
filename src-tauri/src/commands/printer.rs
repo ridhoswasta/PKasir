@@ -174,6 +174,24 @@ async fn send_to_printer(ip: &str, port: u16, data: &[u8]) -> Result<(), String>
     Ok(())
 }
 
+/// Compose the printed/displayed shop header from the canonical shop identity
+/// (shopName + shopAddress) plus any extra receiptHeader lines. Falls back to
+/// the legacy receiptHeader-only behaviour when no shop name/address is set.
+fn compose_header(name: Option<String>, addr: Option<String>, extra: Option<String>) -> String {
+    let name = name.unwrap_or_default();
+    let addr = addr.unwrap_or_default();
+    let extra = extra.unwrap_or_default().replace("\\n", "\n");
+    let (name_t, addr_t, extra_t) = (name.trim(), addr.trim(), extra.trim());
+    if name_t.is_empty() && addr_t.is_empty() {
+        return if extra_t.is_empty() { "CAFE POS".into() } else { extra };
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    if !name_t.is_empty() { parts.push(name_t); }
+    if !addr_t.is_empty() { parts.push(addr_t); }
+    if !extra_t.is_empty() { parts.push(extra_t); }
+    parts.join("\n")
+}
+
 #[tauri::command]
 pub async fn print_test(
     db: State<'_, AppDb>,
@@ -182,14 +200,14 @@ pub async fn print_test(
 ) -> Result<serde_json::Value, String> {
     let (printer_ip, printer_port, header) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
-        let (sip, sport, sheader): (Option<String>, Option<i64>, Option<String>) = conn
+        let (sip, sport, sname, saddr, sheader): (Option<String>, Option<i64>, Option<String>, Option<String>, Option<String>) = conn
             .query_row(
-                "SELECT printerIp, printerPort, receiptHeader FROM settings WHERE id='default'",
+                "SELECT printerIp, printerPort, shopName, shopAddress, receiptHeader FROM settings WHERE id='default'",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .map_err(|e| e.to_string())?;
-        (sip, sport, sheader)
+        (sip, sport, compose_header(sname, saddr, sheader))
     };
 
     let target_ip = ip.or(printer_ip).ok_or("Printer IP belum diset")?;
@@ -199,8 +217,7 @@ pub async fn print_test(
     buf.extend_from_slice(&[ESC, 0x40, ESC, 0x61, 0x01, ESC, 0x21, 0x10]);
     buf.extend_from_slice(b"TEST PRINT\n");
     buf.extend_from_slice(&[ESC, 0x21, 0x00]);
-    let hdr = header.unwrap_or_else(|| "CAFE POS".into());
-    buf.extend_from_slice(format!("{}\n", hdr).as_bytes());
+    buf.extend_from_slice(format!("{}\n", header).as_bytes());
     buf.extend_from_slice(b"Koneksi printer berhasil!\n\n\n");
     buf.extend_from_slice(&[GS, 0x56, 0x42, 0x00]);
 
@@ -215,15 +232,16 @@ pub async fn print_receipt(
 ) -> Result<serde_json::Value, String> {
     let settings = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
-        let (pt, pip, pport, rh, rf, pw, tr, sc, od): (
+        let (pt, pip, pport, rh, rf, pw, tr, sc, od, sname, saddr): (
             Option<String>, Option<String>, Option<i64>,
             Option<String>, Option<String>, Option<String>,
             Option<f64>, Option<f64>, Option<i64>,
+            Option<String>, Option<String>,
         ) = conn
             .query_row(
-                "SELECT printerType, printerIp, printerPort, receiptHeader, receiptFooter, paperWidth, taxRate, serviceCharge, printerOpenDrawer FROM settings WHERE id='default'",
+                "SELECT printerType, printerIp, printerPort, receiptHeader, receiptFooter, paperWidth, taxRate, serviceCharge, printerOpenDrawer, shopName, shopAddress FROM settings WHERE id='default'",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?)),
             )
             .map_err(|e| e.to_string())?;
 
@@ -237,7 +255,7 @@ pub async fn print_receipt(
             ip,
             pport.unwrap_or(9100) as u16,
             ReceiptSettings {
-                header: rh.unwrap_or_default().replace("\\n", "\n"),
+                header: compose_header(sname, saddr, rh),
                 footer: rf.unwrap_or_default().replace("\\n", "\n"),
                 paper_width: pw.unwrap_or_else(|| "80mm".into()),
                 tax_rate: tr.unwrap_or(0.0),

@@ -5,6 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { PageHeader } from '@/components/ui/page-header';
+import { EmptyState } from '@/components/ui/empty-state';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Spinner } from '@/components/ui/spinner';
 import { Trash2, Printer, Eye, Receipt, Utensils, User, FileSpreadsheet } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { format } from 'date-fns';
@@ -13,6 +17,7 @@ import { toast } from 'sonner';
 import { printThermal, buildReceiptSections, isVirtualPrinter, htmlPrintReceipt } from '../services/printer';
 import { logActivity } from '../services/activity';
 import { exportCSV } from '../services/export';
+import { composeReceiptHeader } from '../services/utils';
 
 export function TransactionHistoryModule() {
   const [paginated, setPaginated] = useState<any[]>([]);
@@ -66,7 +71,7 @@ export function TransactionHistoryModule() {
       const receipt = {
         txId: t.id,
         txDate: t.date,
-        header: (settings.receiptHeader || '').replace(/\\n/g, '\n'),
+        header: composeReceiptHeader(settings),
         footer: (settings.receiptFooter || '').replace(/\\n/g, '\n'),
         customer: t.customer,
         tableName: t.tableName,
@@ -142,7 +147,7 @@ export function TransactionHistoryModule() {
           .total { font-weight: bold; }
         </style></head><body>
           ${settings.logo ? `<img src="${settings.logo}" style="display:block;margin:0 auto 8px;width:${settings.logoWidth || 120}px;height:${settings.logoHeight || 32}px;object-fit:contain" />` : ''}
-          <div class="header">${(settings.receiptHeader || 'CAFE POS').replace(/\\n/g, '\n')}</div>
+          <div class="header">${composeReceiptHeader(settings)}</div>
           <div>Struk #${t.id}</div>
           <div>${new Date(t.date).toLocaleString('id-ID')}</div>
           ${t.customer ? `<div>Pelanggan: ${t.customer}</div>` : ''}
@@ -256,35 +261,33 @@ export function TransactionHistoryModule() {
   };
 
   return (
-    <div className="p-8 space-y-6 overflow-y-auto h-full">
-      <div className="flex justify-between items-center flex-wrap gap-3">
-        <h2 className="text-3xl font-extrabold text-foreground tracking-tight">Riwayat Transaksi</h2>
-        <Button
-          variant="outline"
-          onClick={handleExport}
-          disabled={totalCount === 0 || exporting}
-          className="border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
-          title="Ekspor ke file CSV (dapat dibuka di Excel)"
-        >
-          <FileSpreadsheet className="w-4 h-4 mr-2" />
-          {exporting ? 'Mengekspor...' : 'Export Excel'}
-        </Button>
-      </div>
+    <div className="p-6 md:p-8 space-y-6 overflow-y-auto h-full">
+      <PageHeader
+        title="Riwayat Transaksi"
+        icon={Receipt}
+        actions={
+          <Button
+            variant="outline"
+            onClick={handleExport}
+            disabled={totalCount === 0 || exporting}
+            className="border-success/40 text-success hover:bg-success/10 hover:text-success"
+            title="Ekspor ke file CSV (dapat dibuka di Excel)"
+          >
+            <FileSpreadsheet className="w-4 h-4 mr-2" />
+            {exporting ? 'Mengekspor...' : 'Export Excel'}
+          </Button>
+        }
+      />
 
-      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Konfirmasi Hapus</DialogTitle>
-          </DialogHeader>
-          <div className="py-4">
-            Apakah Anda yakin ingin menghapus transaksi ini? Data yang dihapus tidak dapat dikembalikan.
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>Batal</Button>
-            <Button variant="destructive" onClick={handleDelete}>Hapus Transaksi</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={setIsDeleteDialogOpen}
+        variant="destructive"
+        title="Konfirmasi Hapus"
+        description="Apakah Anda yakin ingin menghapus transaksi ini? Data yang dihapus tidak dapat dikembalikan."
+        confirmLabel="Hapus Transaksi"
+        onConfirm={handleDelete}
+      />
 
       {/* View Transaction Detail Dialog */}
       <Dialog open={!!viewTx} onOpenChange={(open) => { if (!open) setViewTx(null); }}>
@@ -296,23 +299,23 @@ export function TransactionHistoryModule() {
             <div className="space-y-4 py-2">
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
-                  <span className="text-slate-500">Tanggal</span>
+                  <span className="text-muted-foreground">Tanggal</span>
                   <p className="font-medium">{format(new Date(viewTx.date), 'dd MMM yyyy HH:mm:ss', { locale: id })}</p>
                 </div>
                 <div>
-                  <span className="text-slate-500">Metode Pembayaran</span>
+                  <span className="text-muted-foreground">Metode Pembayaran</span>
                   <p className="font-medium">{viewTx.paymentMethod}</p>
                 </div>
                 <div>
-                  <span className="text-slate-500">Kasir</span>
+                  <span className="text-muted-foreground">Kasir</span>
                   <p className="font-medium">{viewTx.cashier || '-'}</p>
                 </div>
                 <div>
-                  <span className="text-slate-500">Pelanggan</span>
+                  <span className="text-muted-foreground">Pelanggan</span>
                   <p className="font-medium">{viewTx.customer || '-'}</p>
                 </div>
                 <div>
-                  <span className="text-slate-500">Meja</span>
+                  <span className="text-muted-foreground">Meja</span>
                   <p className="font-medium">{viewTx.tableName || '-'}</p>
                 </div>
               </div>
@@ -320,13 +323,13 @@ export function TransactionHistoryModule() {
               <Separator />
 
               <div>
-                <h4 className="text-sm font-semibold text-slate-500 mb-2">Item</h4>
+                <h4 className="text-sm font-semibold text-muted-foreground mb-2">Item</h4>
                 <div className="space-y-1.5">
                   {(viewTx.items || []).map((item: any, i: number) => (
                     <div key={i} className="flex justify-between text-sm">
                       <span>
                         {item.quantity}x {item.name}
-                        {item.variantName ? <span className="text-slate-400"> ({item.variantName})</span> : ''}
+                        {item.variantName ? <span className="text-muted-foreground"> ({item.variantName})</span> : ''}
                       </span>
                       <span className="font-medium">Rp {((item.price || 0) * item.quantity).toLocaleString('id-ID')}</span>
                     </div>
@@ -337,17 +340,17 @@ export function TransactionHistoryModule() {
               <Separator />
 
               <div className="space-y-1 text-sm">
-                <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><span>Rp {(viewTx.subtotal || 0).toLocaleString('id-ID')}</span></div>
-                {viewTx.discount > 0 && <div className="flex justify-between text-red-500"><span>Diskon{viewTx.discountName ? ` (${viewTx.discountName})` : ''}</span><span>-Rp {(viewTx.discount || 0).toLocaleString('id-ID')}</span></div>}
-                {viewTx.tax > 0 && <div className="flex justify-between"><span className="text-slate-500">Pajak</span><span>Rp {viewTx.tax.toLocaleString('id-ID')}</span></div>}
-                {viewTx.serviceCharge > 0 && <div className="flex justify-between"><span className="text-slate-500">Biaya Layanan</span><span>Rp {viewTx.serviceCharge.toLocaleString('id-ID')}</span></div>}
-                <div className="flex justify-between text-base font-bold pt-1 border-t">
+                <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>Rp {(viewTx.subtotal || 0).toLocaleString('id-ID')}</span></div>
+                {viewTx.discount > 0 && <div className="flex justify-between text-destructive"><span>Diskon{viewTx.discountName ? ` (${viewTx.discountName})` : ''}</span><span>-Rp {(viewTx.discount || 0).toLocaleString('id-ID')}</span></div>}
+                {viewTx.tax > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Pajak</span><span>Rp {viewTx.tax.toLocaleString('id-ID')}</span></div>}
+                {viewTx.serviceCharge > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Biaya Layanan</span><span>Rp {viewTx.serviceCharge.toLocaleString('id-ID')}</span></div>}
+                <div className="flex justify-between text-base font-bold pt-1 border-t border-border">
                   <span>Total</span><span>Rp {(viewTx.total || 0).toLocaleString('id-ID')}</span>
                 </div>
                 {viewTx.paymentMethod === 'Tunai' && (
                   <>
-                    <div className="flex justify-between"><span className="text-slate-500">Dibayar</span><span>Rp {(viewTx.amountPaid || 0).toLocaleString('id-ID')}</span></div>
-                    <div className="flex justify-between"><span className="text-slate-500">Kembalian</span><span>Rp {(viewTx.change || 0).toLocaleString('id-ID')}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Dibayar</span><span>Rp {(viewTx.amountPaid || 0).toLocaleString('id-ID')}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Kembalian</span><span>Rp {(viewTx.change || 0).toLocaleString('id-ID')}</span></div>
                   </>
                 )}
               </div>
@@ -356,8 +359,8 @@ export function TransactionHistoryModule() {
                 <>
                   <Separator />
                   <div>
-                    <h4 className="text-sm font-semibold text-slate-500 mb-1">Catatan</h4>
-                    <div className="bg-slate-50 rounded-lg p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                    <h4 className="text-sm font-semibold text-muted-foreground mb-1">Catatan</h4>
+                    <div className="bg-muted rounded-lg p-3 text-sm text-foreground whitespace-pre-wrap">
                       {viewTx.note}
                     </div>
                   </div>
@@ -371,7 +374,7 @@ export function TransactionHistoryModule() {
               <Button
                 onClick={() => { handlePrint(viewTx); }}
                 disabled={printingId === viewTx?.id}
-                className="bg-orange-500 hover:bg-orange-600"
+                className="bg-brand text-brand-foreground hover:bg-brand/90"
               >
                 <Printer className="w-4 h-4 mr-2" />
                 Cetak Ulang
@@ -381,15 +384,15 @@ export function TransactionHistoryModule() {
         </DialogContent>
       </Dialog>
 
-      <Card>
+      <Card className="rounded-2xl ring-1 ring-foreground/10">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle>Semua Penjualan</CardTitle>
           <span className="text-sm text-muted-foreground">{totalCount} transaksi</span>
         </CardHeader>
         <CardContent className="space-y-2">
           {loading && paginated.length === 0 && (
-            <div className="text-center text-muted-foreground py-12">
-              <Receipt className="w-10 h-10 mx-auto text-muted-foreground/50 mb-3 animate-pulse" />
+            <div className="flex flex-col items-center justify-center gap-3 py-12 text-muted-foreground">
+              <Spinner className="size-6" />
               <p>Memuat transaksi…</p>
             </div>
           )}
@@ -401,16 +404,16 @@ export function TransactionHistoryModule() {
               return (
                 <div
                   key={t.id}
-                  className="group flex items-center gap-4 px-4 py-3 rounded-xl border border-slate-200 bg-white hover:border-orange-300 hover:shadow-sm transition-all"
+                  className="group flex items-center gap-4 px-4 py-3 rounded-xl border border-border bg-card hover:border-brand/40 hover:shadow-sm transition-all"
                 >
                   {/* Left: ID + meta + items preview */}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center flex-wrap gap-x-2 gap-y-1 mb-1">
-                      <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800 text-sm">
-                        <Receipt className="w-3.5 h-3.5 text-orange-500" />#{t.id}
+                      <span className="inline-flex items-center gap-1.5 font-semibold text-foreground text-sm">
+                        <Receipt className="w-3.5 h-3.5 text-brand" />#{t.id}
                       </span>
-                      <span className="text-xs text-slate-400">•</span>
-                      <span className="text-xs text-slate-500">
+                      <span className="text-xs text-muted-foreground">•</span>
+                      <span className="text-xs text-muted-foreground">
                         {format(new Date(t.date), 'dd MMM yyyy HH:mm', { locale: id })}
                       </span>
                       {t.tableName && (
@@ -423,20 +426,20 @@ export function TransactionHistoryModule() {
                         {t.paymentMethod}
                       </Badge>
                       {t.customer && (
-                        <span className="inline-flex items-center gap-1 text-xs text-slate-500">
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                           <User className="w-3 h-3" />
                           {t.customer}
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-slate-600 truncate" title={items.map((i: any) => `${i.quantity}x ${i.name}`).join(', ')}>
+                    <p className="text-sm text-muted-foreground truncate" title={items.map((i: any) => `${i.quantity}x ${i.name}`).join(', ')}>
                       {visibleItems}
                       {remaining > 0 && (
-                        <span className="text-orange-500 font-medium"> +{remaining} lainnya</span>
+                        <span className="text-brand font-medium"> +{remaining} lainnya</span>
                       )}
                     </p>
                     {t.note && (
-                      <p className="text-xs text-slate-400 mt-0.5 truncate" title={t.note}>
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate" title={t.note}>
                         Catatan: {t.note}
                       </p>
                     )}
@@ -449,19 +452,19 @@ export function TransactionHistoryModule() {
                         Rp {((t.total || 0) + (t.discount || 0)).toLocaleString('id-ID')}
                       </p>
                     )}
-                    <p className="text-base font-bold text-slate-800 whitespace-nowrap">
+                    <p className="text-base font-bold text-foreground whitespace-nowrap">
                       Rp {t.total.toLocaleString('id-ID')}
                     </p>
                     {t.discount > 0 && (
-                      <p className="text-[11px] text-red-500 font-medium">Diskon -Rp {(t.discount || 0).toLocaleString('id-ID')}</p>
+                      <p className="text-[11px] text-destructive font-medium">Diskon -Rp {(t.discount || 0).toLocaleString('id-ID')}</p>
                     )}
-                    <p className="text-[11px] text-slate-400 mt-0.5">{totalQty} item</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">{totalQty} item</p>
                   </div>
 
                   {/* Right: actions — always visible */}
                   <div className="shrink-0 flex items-center gap-0.5">
-                    <Button variant="ghost" size="icon" onClick={() => setViewTx(t)} title="Lihat detail">
-                      <Eye className="w-4 h-4 text-slate-600" />
+                    <Button variant="ghost" size="icon" onClick={() => setViewTx(t)} title="Lihat detail" aria-label={`Lihat detail transaksi #${t.id}`}>
+                      <Eye className="w-4 h-4 text-muted-foreground" />
                     </Button>
                     <Button
                       variant="ghost"
@@ -469,11 +472,12 @@ export function TransactionHistoryModule() {
                       onClick={() => handlePrint(t)}
                       disabled={printingId === t.id}
                       title="Cetak ulang struk"
+                      aria-label={`Cetak ulang struk transaksi #${t.id}`}
                     >
-                      <Printer className={`w-4 h-4 ${printingId === t.id ? 'animate-pulse text-orange-500' : 'text-slate-600'}`} />
+                      <Printer className={`w-4 h-4 ${printingId === t.id ? 'animate-pulse text-brand' : 'text-muted-foreground'}`} />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => confirmDelete(t.id)} title="Hapus transaksi">
-                      <Trash2 className="w-4 h-4 text-red-500" />
+                    <Button variant="ghost" size="icon" onClick={() => confirmDelete(t.id)} title="Hapus transaksi" aria-label={`Hapus transaksi #${t.id}`}>
+                      <Trash2 className="w-4 h-4 text-destructive" />
                     </Button>
                   </div>
                 </div>
@@ -481,10 +485,11 @@ export function TransactionHistoryModule() {
             })}
 
           {!loading && totalCount === 0 && (
-            <div className="text-center text-muted-foreground py-12">
-              <Receipt className="w-10 h-10 mx-auto text-muted-foreground/50 mb-3" />
-              <p>Belum ada transaksi</p>
-            </div>
+            <EmptyState
+              icon={Receipt}
+              title="Belum ada transaksi"
+              description="Transaksi yang Anda selesaikan di POS akan muncul di sini."
+            />
           )}
 
           <Pagination

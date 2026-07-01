@@ -11,6 +11,18 @@ impl AppDb {
 }
 
 pub fn init_db(conn: &Connection) -> Result<()> {
+    // Performance pragmas. WAL lets reads proceed during writes and makes
+    // commits much cheaper; NORMAL sync is safe with WAL (durable except on
+    // power loss, never corrupting). busy_timeout avoids spurious lock errors.
+    conn.execute_batch(
+        "
+        PRAGMA journal_mode = WAL;
+        PRAGMA synchronous = NORMAL;
+        PRAGMA busy_timeout = 5000;
+        PRAGMA cache_size = -8000;
+        PRAGMA temp_store = MEMORY;
+        ",
+    )?;
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS settings (
@@ -111,6 +123,56 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             priority INTEGER NOT NULL DEFAULT 0,
             description TEXT
         );
+        -- ── Inventory add-ons (all optional / opt-in; do not affect base stock flow) ──
+        CREATE TABLE IF NOT EXISTS suppliers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            contactPerson TEXT,
+            phone TEXT,
+            email TEXT,
+            address TEXT,
+            note TEXT,
+            createdAt TEXT
+        );
+        CREATE TABLE IF NOT EXISTS product_batches (
+            id TEXT PRIMARY KEY,
+            productId TEXT NOT NULL,
+            batchNo TEXT,
+            expiryDate TEXT,
+            qty INTEGER NOT NULL DEFAULT 0,
+            initialQty INTEGER NOT NULL DEFAULT 0,
+            costPrice REAL,
+            supplierId TEXT,
+            receivedDate TEXT,
+            note TEXT,
+            createdAt TEXT
+        );
+        CREATE TABLE IF NOT EXISTS stock_movements (
+            id TEXT PRIMARY KEY,
+            productId TEXT NOT NULL,
+            productName TEXT,
+            batchId TEXT,
+            type TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            balanceAfter INTEGER,
+            reference TEXT,
+            note TEXT,
+            user TEXT,
+            date TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS purchase_orders (
+            id TEXT PRIMARY KEY,
+            supplierId TEXT,
+            supplierName TEXT,
+            status TEXT NOT NULL DEFAULT 'draft',
+            orderDate TEXT,
+            expectedDate TEXT,
+            receivedDate TEXT,
+            note TEXT,
+            total REAL DEFAULT 0,
+            items TEXT NOT NULL DEFAULT '[]',
+            createdAt TEXT
+        );
         ",
     )?;
 
@@ -146,6 +208,68 @@ pub fn init_db(conn: &Connection) -> Result<()> {
         "ALTER TABLE transactions ADD COLUMN discount REAL DEFAULT 0",
         "ALTER TABLE transactions ADD COLUMN discountId TEXT",
         "ALTER TABLE transactions ADD COLUMN discountName TEXT",
+        // Loyalty settings
+        "ALTER TABLE settings ADD COLUMN loyaltyEnabled INTEGER DEFAULT 0",
+        "ALTER TABLE settings ADD COLUMN redeemRate REAL DEFAULT 100",
+        "ALTER TABLE settings ADD COLUMN minRedeemPoints REAL DEFAULT 100",
+        // SMTP / email alert settings
+        "ALTER TABLE settings ADD COLUMN emailAlertEnabled INTEGER DEFAULT 0",
+        "ALTER TABLE settings ADD COLUMN smtpHost TEXT DEFAULT ''",
+        "ALTER TABLE settings ADD COLUMN smtpPort INTEGER DEFAULT 587",
+        "ALTER TABLE settings ADD COLUMN smtpUseTls INTEGER DEFAULT 1",
+        "ALTER TABLE settings ADD COLUMN smtpFrom TEXT DEFAULT ''",
+        "ALTER TABLE settings ADD COLUMN smtpUsername TEXT DEFAULT ''",
+        "ALTER TABLE settings ADD COLUMN smtpPassword TEXT DEFAULT ''",
+        "ALTER TABLE settings ADD COLUMN emailRecipient TEXT DEFAULT ''",
+        "ALTER TABLE settings ADD COLUMN lowStockThreshold INTEGER DEFAULT 5",
+        // Canonical shop identity (used by PO PDF, reports, etc.)
+        "ALTER TABLE settings ADD COLUMN shopName TEXT DEFAULT ''",
+        "ALTER TABLE settings ADD COLUMN shopAddress TEXT DEFAULT ''",
+        // Loyalty usage on transactions
+        "ALTER TABLE transactions ADD COLUMN pointsRedeemed REAL DEFAULT 0",
+        "ALTER TABLE transactions ADD COLUMN pointsEarned REAL DEFAULT 0",
+        "ALTER TABLE transactions ADD COLUMN redemptionDiscount REAL DEFAULT 0",
+        // Inventory add-ons: per-product opt-in batch/expiry tracking + supplier link
+        "ALTER TABLE products ADD COLUMN trackBatches INTEGER DEFAULT 0",
+        "ALTER TABLE products ADD COLUMN supplierId TEXT",
+        "ALTER TABLE products ADD COLUMN reorderPoint INTEGER DEFAULT 0",
+        // Indexes for the new inventory tables
+        "CREATE INDEX IF NOT EXISTS idx_product_batches_product ON product_batches(productId)",
+        "CREATE INDEX IF NOT EXISTS idx_product_batches_expiry ON product_batches(expiryDate)",
+        "CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(productId)",
+        "CREATE INDEX IF NOT EXISTS idx_stock_movements_date ON stock_movements(date DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_purchase_orders_date ON purchase_orders(orderDate DESC)",
+        // ── Recipe Costing ────────────────────────────────────────────────────
+        // ingredients: master list of raw materials with unit cost & stock
+        "CREATE TABLE IF NOT EXISTS ingredients (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            unit TEXT NOT NULL,
+            cost_per_unit REAL NOT NULL,
+            stock_qty REAL DEFAULT 0,
+            low_stock_threshold REAL DEFAULT 0,
+            created_at TEXT,
+            updated_at TEXT
+        )",
+        // recipes: links products to ingredients with required quantity per unit sold
+        "CREATE TABLE IF NOT EXISTS recipes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id TEXT NOT NULL,
+            ingredient_id INTEGER NOT NULL,
+            quantity REAL NOT NULL,
+            UNIQUE(product_id, ingredient_id)
+        )",
+        "CREATE INDEX IF NOT EXISTS idx_recipes_product ON recipes(product_id)",
+        "CREATE INDEX IF NOT EXISTS idx_ingredients_name ON ingredients(name)",
+        // ── Dynamic QRIS ──────────────────────────────────────────────────────
+        "ALTER TABLE settings ADD COLUMN qrisEnabled INTEGER DEFAULT 0",
+        "ALTER TABLE settings ADD COLUMN qrisStatic TEXT DEFAULT ''",
+        "ALTER TABLE settings ADD COLUMN qrisMerchantName TEXT DEFAULT ''",
+        // ── QRIS image-upload flow (v2) ───────────────────────────────────────
+        // qrisMerchantCity: extracted from tag 60 of the decoded QRIS string
+        // qrisMode: 'static' (show uploaded image as-is) | 'dynamic' (generate QR with amount)
+        "ALTER TABLE settings ADD COLUMN qrisMerchantCity TEXT DEFAULT ''",
+        "ALTER TABLE settings ADD COLUMN qrisMode TEXT DEFAULT 'static'",
     ];
     for m in migrations {
         let _ = conn.execute(m, []);

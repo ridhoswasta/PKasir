@@ -1,9 +1,32 @@
+# Dependencies
 node_modules/
+
+# Build outputs
 build/
 dist/
+release/
 coverage/
-.DS_Store
-*.log
+src-tauri/target/
+
+# Tauri generated platform schemas
+src-tauri/gen/schemas/linux-schema.json
+
+# Local AI/editor metadata
+.claude/
+.cursor/
+.idea/
+.vscode/
+
+# Local environment files
 .env*
 !.env.example
-src-tauri/target/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# Local/non-source documents
+*.docx

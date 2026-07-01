@@ -36,27 +36,50 @@ export async function listThermalPrinters(): Promise<PrinterInfo[]> {
   return await fn();
 }
 
+const DEFAULT_CODE_PAGE = { code_page: 0, encode: 'WINDOWS_1252', use_gbk: false };
+
+// Plugin v2 dropped the `PrinterOptions` wrapper: `options` is now the CodePage
+// object directly, and the cut/beep/drawer shorthands must be emitted as
+// explicit sections. We keep this wrapper's public API (action flags on
+// `options`) stable for callers and translate to the v2 shape here.
+function codePage(job: PrintJobRequest) {
+  return { ...DEFAULT_CODE_PAGE, ...(job.options?.code_page || {}) };
+}
+
+// Build the drawer/beep/cut sections that v2 no longer accepts as shorthand
+// options. A Cut is only appended when the caller's sections don't already
+// include one (buildReceiptSections emits its own trailing Cut).
+function actionSections(opts: PrintJobRequest['options'], sections: any[]): any[] {
+  const extra: any[] = [];
+  if (opts?.cut_paper && !sections.some((s) => s && 'Cut' in s)) {
+    extra.push({ Cut: { mode: 'partial', feed: 0 } });
+  }
+  if (opts?.open_cash_drawer) extra.push({ Drawer: { pin: 2, pulse_time: 120 } });
+  if (opts?.beep) extra.push({ Beep: { times: 2, duration: 100 } });
+  return extra;
+}
+
 export async function printThermal(job: PrintJobRequest): Promise<void> {
   const m: any = await plugin();
   const fn = m.print_thermal_printer || m.printThermalPrinter;
-  const jobWithCP: PrintJobRequest = {
-    ...job,
-    options: { code_page: DEFAULT_CODE_PAGE, ...job.options },
-  };
-  await fn(jobWithCP);
+  await fn({
+    printer: job.printer,
+    paper_size: job.paper_size,
+    options: codePage(job),
+    sections: [...job.sections, ...actionSections(job.options, job.sections)],
+  });
 }
-
-const DEFAULT_CODE_PAGE = { code_page: 0, encode: 'WINDOWS_1252', use_gbk: false };
 
 export async function testThermal(job: PrintJobRequest): Promise<void> {
   const m: any = await plugin();
   const fn = m.test_thermal_printer || m.testThermalPrinter;
-  const jobWithCP: PrintJobRequest = {
-    ...job,
-    options: { code_page: DEFAULT_CODE_PAGE, ...job.options },
-  };
   await fn({
-    printer_info: jobWithCP,
+    printer_info: {
+      printer: job.printer,
+      paper_size: job.paper_size,
+      options: codePage(job),
+      sections: job.sections,
+    },
     include_text: true,
     include_text_styles: true,
     include_alignment: true,
@@ -65,9 +88,9 @@ export async function testThermal(job: PrintJobRequest): Promise<void> {
     include_barcode: false,
     include_qr: false,
     include_image: false,
-    include_beep: false,
-    test_cash_drawer: false,
-    cut_paper: true,
+    include_beep: !!job.options?.beep,
+    test_cash_drawer: !!job.options?.open_cash_drawer,
+    cut_paper: job.options?.cut_paper ?? true,
     test_feed: true,
   });
 }

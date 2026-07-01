@@ -5,11 +5,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Plus, Trash2, FileSpreadsheet } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Plus, Trash2, FileSpreadsheet, Wallet, TrendingUp, TrendingDown, Tag } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { StatCard } from '@/components/ui/stat-card';
+import { PageHeader } from '@/components/ui/page-header';
+import { EmptyState } from '@/components/ui/empty-state';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Spinner } from '@/components/ui/spinner';
 import { format } from 'date-fns';
 import { id } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -30,6 +35,8 @@ export function MoneyFlowModule() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
   const [exporting, setExporting] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchPage = () => {
     setLoading(true);
@@ -154,15 +161,19 @@ export function MoneyFlowModule() {
     }
   };
 
-  const handleDeleteFlow = async (flowId: string) => {
-    if (!confirm('Apakah Anda yakin ingin menghapus catatan ini?')) return;
+  const handleDeleteFlow = async () => {
+    if (!deleteId) return;
+    setDeleting(true);
     try {
-      await invoke('delete_money_flow', { id: flowId });
-      logActivity('Hapus Arus Kas', flowId);
+      await invoke('delete_money_flow', { id: deleteId });
+      logActivity('Hapus Arus Kas', deleteId);
       toast.success('Catatan berhasil dihapus');
+      setDeleteId(null);
       fetchPage();
     } catch (error) {
       toast.error('Gagal menghapus catatan');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -172,34 +183,38 @@ export function MoneyFlowModule() {
   useEffect(() => { if (page > totalPages) setPage(totalPages); }, [totalPages, page]);
 
   return (
-    <div className="p-8 space-y-6 overflow-y-auto h-full">
-      <div className="flex justify-between items-center flex-wrap gap-3">
-        <h2 className="text-3xl font-bold text-foreground">Arus Kas</h2>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={handleExport}
-            disabled={totalCount === 0 || exporting}
-            className="border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
-            title="Ekspor ke file CSV (dapat dibuka di Excel)"
-          >
-            <FileSpreadsheet className="w-4 h-4 mr-2" />
-            {exporting ? 'Mengekspor...' : 'Export Excel'}
-          </Button>
-          <Button className="bg-orange-500 hover:bg-orange-600 text-white" onClick={() => setIsDialogOpen(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Catat Arus Kas
-          </Button>
-        </div>
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogContent>
+    <div className="p-6 md:p-8 space-y-6 overflow-y-auto h-full">
+      <PageHeader
+        title="Arus Kas"
+        icon={Wallet}
+        actions={
+          <>
+            <Button
+              variant="outline"
+              onClick={handleExport}
+              disabled={totalCount === 0 || exporting}
+              title="Ekspor ke file CSV (dapat dibuka di Excel)"
+            >
+              <FileSpreadsheet className="w-4 h-4 mr-2" />
+              {exporting ? 'Mengekspor...' : 'Export Excel'}
+            </Button>
+            <Button onClick={() => setIsDialogOpen(true)}>
+              <Plus className="w-4 h-4 mr-2" />
+              Catat Arus Kas
+            </Button>
+          </>
+        }
+      />
+
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent>
             <DialogHeader>
               <DialogTitle>Catat Pemasukan / Pengeluaran</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label>Jenis</Label>
-                <Select value={newFlow.type} onValueChange={(val) => setNewFlow({...newFlow, type: val})}>
+                <Select value={newFlow.type} onValueChange={(val) => setNewFlow({...newFlow, type: val ?? ''})}>
                   <SelectTrigger><SelectValue placeholder="Pilih jenis" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Pemasukan">Pemasukan</SelectItem>
@@ -209,7 +224,7 @@ export function MoneyFlowModule() {
               </div>
               <div className="space-y-2">
                 <Label>Kategori</Label>
-                <Select value={newFlow.category} onValueChange={(val) => setNewFlow({...newFlow, category: val})}>
+                <Select value={newFlow.category} onValueChange={(val) => setNewFlow({...newFlow, category: val ?? ''})}>
                   <SelectTrigger><SelectValue placeholder="Pilih kategori" /></SelectTrigger>
                   <SelectContent>
                     {settings.flowCategories?.map((cat: string) => (
@@ -226,47 +241,38 @@ export function MoneyFlowModule() {
                 <Label>Keterangan</Label>
                 <Input value={newFlow.description} onChange={e => setNewFlow({...newFlow, description: e.target.value})} />
               </div>
-              <Button onClick={handleAddFlow} className="w-full bg-orange-500 hover:bg-orange-600">
+              <Button onClick={handleAddFlow} className="w-full">
                 Simpan Catatan
               </Button>
             </div>
-          </DialogContent>
-        </Dialog>
-      </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Saldo Saat Ini</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-foreground">Rp {balance.toLocaleString('id-ID')}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Pemasukan</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">Rp {totalIncome.toLocaleString('id-ID')}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Diskon</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-red-500 dark:text-red-400">Rp {(totalDiscount || 0).toLocaleString('id-ID')}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Pengeluaran</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-red-600 dark:text-red-400">Rp {totalExpense.toLocaleString('id-ID')}</div>
-          </CardContent>
-        </Card>
+        <StatCard
+          label="Saldo Saat Ini"
+          value={`Rp ${balance.toLocaleString('id-ID')}`}
+          icon={Wallet}
+          tone="info"
+        />
+        <StatCard
+          label="Total Pemasukan"
+          value={`Rp ${totalIncome.toLocaleString('id-ID')}`}
+          icon={TrendingUp}
+          tone="success"
+        />
+        <StatCard
+          label="Total Diskon"
+          value={`Rp ${(totalDiscount || 0).toLocaleString('id-ID')}`}
+          icon={Tag}
+          tone="warning"
+        />
+        <StatCard
+          label="Total Pengeluaran"
+          value={`Rp ${totalExpense.toLocaleString('id-ID')}`}
+          icon={TrendingDown}
+          tone="destructive"
+        />
       </div>
 
       <Card>
@@ -292,11 +298,11 @@ export function MoneyFlowModule() {
                   <TableCell>{flow.description}</TableCell>
                   <TableCell>{flow.category}</TableCell>
                   <TableCell>
-                    <Badge variant={flow.type === 'Pemasukan' ? 'default' : 'destructive'} className={flow.type === 'Pemasukan' ? 'bg-emerald-500' : ''}>
+                    <Badge className={flow.type === 'Pemasukan' ? 'bg-success/12 text-success' : 'bg-destructive/12 text-destructive'}>
                       {flow.type}
                     </Badge>
                     {flow.description?.includes('[Diskon:') && (
-                      <Badge className="ml-1 bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 text-xs">Diskon</Badge>
+                      <Badge className="ml-1 bg-warning/15 text-warning text-xs">Diskon</Badge>
                     )}
                   </TableCell>
                   <TableCell className="text-right font-medium">
@@ -304,30 +310,38 @@ export function MoneyFlowModule() {
                       <div>
                         <span className="text-muted-foreground line-through text-xs block">Rp {(flow.amount + flow.discountAmount).toLocaleString('id-ID')}</span>
                         <span className="block">Rp {flow.amount.toLocaleString('id-ID')}</span>
-                        <span className="text-red-500 text-xs block">Diskon -Rp {flow.discountAmount.toLocaleString('id-ID')}</span>
+                        <span className="text-destructive text-xs block">Diskon -Rp {flow.discountAmount.toLocaleString('id-ID')}</span>
                       </div>
                     ) : (
                       <span>Rp {flow.amount.toLocaleString('id-ID')}</span>
                     )}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="icon" onClick={() => handleDeleteFlow(flow.id)}>
-                      <Trash2 className="w-4 h-4 text-red-500" />
+                    <Button variant="ghost" size="icon" onClick={() => setDeleteId(flow.id)} aria-label="Hapus catatan">
+                      <Trash2 className="w-4 h-4 text-destructive" />
                     </Button>
                   </TableCell>
                 </TableRow>
               ))}
               {loading && paginatedFlows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                    Memuat catatan…
+                  <TableCell colSpan={6} className="py-10">
+                    <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                      <Spinner />
+                      <span>Memuat…</span>
+                    </div>
                   </TableCell>
                 </TableRow>
               )}
               {!loading && totalCount === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                    Belum ada catatan arus kas
+                  <TableCell colSpan={6}>
+                    <EmptyState
+                      compact
+                      icon={Wallet}
+                      title="Belum ada catatan arus kas"
+                      description="Catat pemasukan atau pengeluaran untuk mulai memantau arus kas."
+                    />
                   </TableCell>
                 </TableRow>
               )}
@@ -344,6 +358,17 @@ export function MoneyFlowModule() {
           />
         </CardContent>
       </Card>
+
+      <ConfirmDialog
+        open={deleteId !== null}
+        onOpenChange={(open) => { if (!open) setDeleteId(null); }}
+        title="Hapus catatan arus kas?"
+        description="Apakah Anda yakin ingin menghapus catatan ini? Tindakan ini tidak dapat dibatalkan."
+        confirmLabel="Hapus"
+        variant="destructive"
+        loading={deleting}
+        onConfirm={handleDeleteFlow}
+      />
     </div>
   );
 }

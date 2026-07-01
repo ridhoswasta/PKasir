@@ -32,16 +32,17 @@ export function Pagination({ page, pageSize, total, onPageChange, pageSizeOption
   return (
     <div className="flex items-center justify-between gap-3 pt-3 flex-wrap">
       <div className="flex items-center gap-3">
-        <p className="text-xs text-slate-500">
-          Menampilkan <span className="font-semibold text-slate-700">{start}-{end}</span> dari <span className="font-semibold text-slate-700">{total}</span>
+        <p className="text-xs text-muted-foreground">
+          Menampilkan <span className="font-semibold text-foreground">{start}-{end}</span> dari <span className="font-semibold text-foreground">{total}</span>
         </p>
         {pageSizeOptions && onPageSizeChange && (
-          <div className="flex items-center gap-1.5 text-xs text-slate-500">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span>Per halaman:</span>
             <select
               value={pageSize}
               onChange={(e) => onPageSizeChange(Number(e.target.value))}
-              className="h-7 rounded-md border border-slate-200 bg-white px-1.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500"
+              aria-label="Item per halaman"
+              className="h-7 rounded-md border border-border bg-background px-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand"
             >
               {pageSizeOptions.map((n) => (
                 <option key={n} value={n}>{n}</option>
@@ -58,21 +59,24 @@ export function Pagination({ page, pageSize, total, onPageChange, pageSizeOption
           disabled={page <= 1}
           onClick={() => onPageChange(page - 1)}
           title="Sebelumnya"
+          aria-label="Halaman sebelumnya"
         >
           <ChevronLeft className="w-3.5 h-3.5" />
         </Button>
         {getPageNumbers().map((p, i) => (
           p === '...' ? (
-            <span key={`dot-${i}`} className="px-1.5 text-slate-400 text-xs">…</span>
+            <span key={`dot-${i}`} className="px-1.5 text-muted-foreground text-xs">…</span>
           ) : (
             <button
               key={p}
               type="button"
               onClick={() => onPageChange(p)}
+              aria-label={`Halaman ${p}`}
+              aria-current={page === p ? 'page' : undefined}
               className={`h-8 min-w-[32px] px-2 text-xs font-semibold rounded-md transition-colors ${
                 page === p
-                  ? 'bg-orange-500 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100 border border-transparent hover:border-slate-200'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:bg-muted border border-transparent hover:border-border'
               }`}
             >
               {p}
@@ -86,6 +90,7 @@ export function Pagination({ page, pageSize, total, onPageChange, pageSizeOption
           disabled={page >= totalPages}
           onClick={() => onPageChange(page + 1)}
           title="Berikutnya"
+          aria-label="Halaman berikutnya"
         >
           <ChevronRight className="w-3.5 h-3.5" />
         </Button>

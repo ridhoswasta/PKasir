@@ -25,6 +25,15 @@
     --color-input: var(--input);
     --color-border: var(--border);
     --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+    --color-success: var(--success);
+    --color-success-foreground: var(--success-foreground);
+    --color-warning: var(--warning);
+    --color-warning-foreground: var(--warning-foreground);
+    --color-info: var(--info);
+    --color-info-foreground: var(--info-foreground);
+    --color-brand: var(--brand);
+    --color-brand-foreground: var(--brand-foreground);
     --color-accent-foreground: var(--accent-foreground);
     --color-accent: var(--accent);
     --color-muted-foreground: var(--muted-foreground);
@@ -66,6 +75,17 @@
     --accent: oklch(0.9 0.02 240);
     --accent-foreground: oklch(0.2 0.01 260);
     --destructive: oklch(0.577 0.245 27.325);
+    --destructive-foreground: oklch(0.985 0 0);
+    /* Semantic status colors — used app-wide for consistency */
+    --success: oklch(0.6 0.14 155);
+    --success-foreground: oklch(0.985 0 0);
+    --warning: oklch(0.72 0.15 70);
+    --warning-foreground: oklch(0.22 0.04 70);
+    --info: oklch(0.55 0.17 250);
+    --info-foreground: oklch(0.985 0 0);
+    /* Brand accent — warm orange identity (logo, primary highlights, key CTAs) */
+    --brand: oklch(0.69 0.18 47);
+    --brand-foreground: oklch(0.985 0 0);
     --border: oklch(0.9 0.003 100);
     --input: oklch(0.9 0.003 100);
     --ring: oklch(0.65 0.12 240);
@@ -89,9 +109,9 @@
     /* Brand accent — Yoco cobalt blue (charts, highlights) */
     --brand-blue: oklch(0.55 0.17 250);
     /* Gradient anchors for the sidebar */
-    --sidebar-grad-top: #cfe4f5;
-    --sidebar-grad-mid: #e6f0f8;
-    --sidebar-grad-bottom: #f5f3ef;
+    --sidebar-grad-top: #eef2f7;
+    --sidebar-grad-mid: #f1f1f3;
+    --sidebar-grad-bottom: #f6f4f1;
 }
 
 .dark {
@@ -112,6 +132,17 @@
     --accent: oklch(0.3 0.03 240);
     --accent-foreground: oklch(0.94 0.005 240);
     --destructive: oklch(0.68 0.2 25);
+    --destructive-foreground: oklch(0.985 0 0);
+    /* Semantic status colors — brighter for dark surfaces */
+    --success: oklch(0.7 0.15 158);
+    --success-foreground: oklch(0.16 0.02 160);
+    --warning: oklch(0.8 0.14 75);
+    --warning-foreground: oklch(0.2 0.04 70);
+    --info: oklch(0.72 0.16 245);
+    --info-foreground: oklch(0.16 0.02 250);
+    /* Brand accent — warm orange identity */
+    --brand: oklch(0.74 0.17 50);
+    --brand-foreground: oklch(0.16 0.02 50);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 14%);
     --ring: oklch(0.7 0.13 240);
@@ -134,9 +165,9 @@
     /* Brand accent — brighter cobalt on dark */
     --brand-blue: oklch(0.72 0.16 245);
     /* Gradient anchors for the sidebar */
-    --sidebar-grad-top: #1a2540;
-    --sidebar-grad-mid: #1c2030;
-    --sidebar-grad-bottom: #14181f;
+    --sidebar-grad-top: #171d2b;
+    --sidebar-grad-mid: #14161e;
+    --sidebar-grad-bottom: #0f1115;
 }
 
 @layer base {
@@ -151,12 +182,34 @@
     }
 }
 
-/* Yoco-style sidebar gradient utility */
+/* Modern mesh-gradient sidebar — subtle brand + info blooms over a refined wash */
 .yoco-sidebar-bg {
-    background: linear-gradient(180deg,
-        var(--sidebar-grad-top) 0%,
-        var(--sidebar-grad-mid) 45%,
-        var(--sidebar-grad-bottom) 100%);
+    background-color: var(--sidebar);
+    background-image:
+        radial-gradient(125% 90% at 0% -5%,
+            color-mix(in oklch, var(--brand) 16%, transparent) 0%,
+            transparent 48%),
+        radial-gradient(120% 80% at 110% 108%,
+            color-mix(in oklch, var(--info) 20%, transparent) 0%,
+            transparent 52%),
+        linear-gradient(180deg,
+            var(--sidebar-grad-top) 0%,
+            var(--sidebar-grad-mid) 52%,
+            var(--sidebar-grad-bottom) 100%);
+}
+
+.dark .yoco-sidebar-bg {
+    background-image:
+        radial-gradient(125% 90% at 0% -5%,
+            color-mix(in oklch, var(--brand) 22%, transparent) 0%,
+            transparent 46%),
+        radial-gradient(120% 85% at 110% 108%,
+            color-mix(in oklch, var(--info) 26%, transparent) 0%,
+            transparent 50%),
+        linear-gradient(180deg,
+            var(--sidebar-grad-top) 0%,
+            var(--sidebar-grad-mid) 52%,
+            var(--sidebar-grad-bottom) 100%);
 }
 
 /* Unobtrusive scrollbars — respond to theme */
@@ -222,4 +275,69 @@
 }
 .scrollbar-none {
     scrollbar-width: none;
+}
+
+/* ============================================================
+   Motion layer — app-wide life: entrances, stagger, hover lift
+   ============================================================ */
+
+@keyframes page-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes rise-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes scale-in {
+    from { opacity: 0; transform: scale(0.96); }
+    to   { opacity: 1; transform: scale(1); }
+}
+@keyframes bar-grow {
+    from { transform: scaleY(0); }
+    to   { transform: scaleY(1); }
+}
+
+/* Content/page transition — applied to module content keyed by active tab */
+.anim-page  { animation: page-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-rise  { animation: rise-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-scale { animation: scale-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* Grow a bar chart column from its base */
+.bar-grow { transform-origin: bottom; animation: bar-grow 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* Interactive surface: gentle lift + shadow on hover, settle on press */
+.hover-lift {
+    transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+                box-shadow 0.2s ease,
+                background-color 0.2s ease,
+                border-color 0.2s ease;
+    will-change: transform;
+}
+.hover-lift:hover   { transform: translateY(-3px); box-shadow: 0 12px 26px -14px rgb(0 0 0 / 0.30); }
+.hover-lift:active  { transform: translateY(-1px); }
+
+/* Staggered entrance for direct children (lists, grids, nav). */
+.stagger > * { animation: rise-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.stagger > *:nth-child(1)  { animation-delay: 0.02s; }
+.stagger > *:nth-child(2)  { animation-delay: 0.05s; }
+.stagger > *:nth-child(3)  { animation-delay: 0.08s; }
+.stagger > *:nth-child(4)  { animation-delay: 0.11s; }
+.stagger > *:nth-child(5)  { animation-delay: 0.14s; }
+.stagger > *:nth-child(6)  { animation-delay: 0.17s; }
+.stagger > *:nth-child(7)  { animation-delay: 0.20s; }
+.stagger > *:nth-child(8)  { animation-delay: 0.23s; }
+.stagger > *:nth-child(9)  { animation-delay: 0.26s; }
+.stagger > *:nth-child(10) { animation-delay: 0.29s; }
+.stagger > *:nth-child(11) { animation-delay: 0.32s; }
+.stagger > *:nth-child(12) { animation-delay: 0.35s; }
+
+/* Accessibility: honor the OS "reduce motion" preference everywhere */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
 }

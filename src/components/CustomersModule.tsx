@@ -3,10 +3,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { Plus, Eye, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Eye, Pencil, Trash2, Users } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { PageHeader } from '@/components/ui/page-header';
+import { EmptyState } from '@/components/ui/empty-state';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { format } from 'date-fns';
 import { id } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -27,11 +30,11 @@ export function CustomersModule() {
   const [form, setForm] = useState({ name: '', phone: '', points: 0 });
 
   const fetchCustomers = () => {
-    invoke('get_customers').then(setCustomers).catch(() => {});
+    invoke<any[]>('get_customers').then(setCustomers).catch(() => {});
   };
 
   const fetchTransactions = () => {
-    invoke('get_transactions').then(setTransactions).catch(() => {});
+    invoke<any[]>('get_transactions').then(setTransactions).catch(() => {});
   };
 
   useEffect(() => {
@@ -120,16 +123,19 @@ export function CustomersModule() {
     : [];
 
   return (
-    <div className="p-8 space-y-6 overflow-y-auto h-full">
-      <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-extrabold text-foreground tracking-tight">Pelanggan</h2>
-        <Button className="bg-orange-500 hover:bg-orange-600" onClick={openAdd}>
-          <Plus className="w-4 h-4 mr-2" />
-          Tambah Pelanggan
-        </Button>
-      </div>
+    <div className="p-6 md:p-8 space-y-6 overflow-y-auto h-full">
+      <PageHeader
+        title="Pelanggan"
+        icon={Users}
+        actions={
+          <Button onClick={openAdd}>
+            <Plus className="w-4 h-4 mr-2" />
+            Tambah Pelanggan
+          </Button>
+        }
+      />
 
-      <Card>
+      <Card className="rounded-2xl ring-1 ring-foreground/10">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
@@ -143,26 +149,36 @@ export function CustomersModule() {
             <TableBody>
               {customers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-slate-500 py-8">
-                    Belum ada pelanggan
+                  <TableCell colSpan={4} className="p-0">
+                    <EmptyState
+                      icon={Users}
+                      title="Belum ada pelanggan"
+                      description="Tambahkan pelanggan pertama untuk mulai melacak poin dan riwayat transaksi."
+                      action={
+                        <Button onClick={openAdd}>
+                          <Plus className="w-4 h-4 mr-2" />
+                          Tambah Pelanggan
+                        </Button>
+                      }
+                    />
                   </TableCell>
                 </TableRow>
               ) : (
                 customers.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="font-medium">{c.name}</TableCell>
-                    <TableCell>{c.phone || <span className="text-slate-400">-</span>}</TableCell>
+                    <TableCell>{c.phone || <span className="text-muted-foreground">-</span>}</TableCell>
                     <TableCell>{c.points || 0}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => openView(c)}>
+                        <Button variant="ghost" size="sm" onClick={() => openView(c)} aria-label={`Lihat ${c.name}`}>
                           <Eye className="w-4 h-4 mr-1" /> Lihat
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(c)}>
-                          <Pencil className="w-4 h-4 mr-1 text-blue-600" /> Edit
+                        <Button variant="ghost" size="sm" onClick={() => openEdit(c)} aria-label={`Edit ${c.name}`}>
+                          <Pencil className="w-4 h-4 mr-1 text-info" /> Edit
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => openDelete(c)} title="Hapus pelanggan">
-                          <Trash2 className="w-4 h-4 text-red-500" />
+                        <Button variant="ghost" size="icon" onClick={() => openDelete(c)} aria-label={`Hapus ${c.name}`}>
+                          <Trash2 className="w-4 h-4 text-destructive" />
                         </Button>
                       </div>
                     </TableCell>
@@ -192,7 +208,7 @@ export function CustomersModule() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsAddOpen(false)}>Batal</Button>
-            <Button onClick={handleAdd} className="bg-orange-500 hover:bg-orange-600">
+            <Button onClick={handleAdd}>
               Simpan Pelanggan
             </Button>
           </DialogFooter>
@@ -225,7 +241,7 @@ export function CustomersModule() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditOpen(false)}>Batal</Button>
-            <Button onClick={handleEdit} className="bg-orange-500 hover:bg-orange-600">
+            <Button onClick={handleEdit}>
               Simpan Perubahan
             </Button>
           </DialogFooter>
@@ -233,20 +249,19 @@ export function CustomersModule() {
       </Dialog>
 
       {/* Delete Confirmation */}
-      <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Hapus Pelanggan</DialogTitle>
-          </DialogHeader>
-          <div className="py-2">
+      <ConfirmDialog
+        open={isDeleteOpen}
+        onOpenChange={setIsDeleteOpen}
+        title="Hapus Pelanggan"
+        description={
+          <>
             Yakin ingin menghapus pelanggan <b>{activeCustomer?.name}</b>? Riwayat transaksinya tidak ikut terhapus.
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDeleteOpen(false)}>Batal</Button>
-            <Button variant="destructive" onClick={handleDelete}>Hapus</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </>
+        }
+        variant="destructive"
+        confirmLabel="Hapus"
+        onConfirm={handleDelete}
+      />
 
       {/* View Customer Dialog */}
       <Dialog open={isViewOpen} onOpenChange={setIsViewOpen}>
@@ -267,7 +282,7 @@ export function CustomersModule() {
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Total Poin</p>
-                  <p className="font-semibold text-base text-orange-600 dark:text-orange-400">{activeCustomer.points || 0}</p>
+                  <p className="font-semibold text-base text-brand">{activeCustomer.points || 0}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Total Transaksi</p>
@@ -308,7 +323,7 @@ export function CustomersModule() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsViewOpen(false)}>Tutup</Button>
             {activeCustomer && (
-              <Button onClick={() => { setIsViewOpen(false); openEdit(activeCustomer); }} className="bg-orange-500 hover:bg-orange-600 text-white">
+              <Button onClick={() => { setIsViewOpen(false); openEdit(activeCustomer); }}>
                 <Pencil className="w-4 h-4 mr-2" /> Edit
               </Button>
             )}

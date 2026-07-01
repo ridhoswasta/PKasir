@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
   ShoppingCart, Package, Coffee,
-  BarChart3, Users, Wallet, Settings as SettingsIcon, Receipt, ChevronRight
+  BarChart3, Users, Wallet, Settings as SettingsIcon, Receipt, ChevronRight,
+  type LucideIcon
 } from 'lucide-react';
 import { isToday, isThisMonth, subDays, startOfDay, format } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -12,8 +13,8 @@ export function DashboardModule({ setActiveTab }: { setActiveTab: (tab: string) 
   const [products, setProducts] = useState<any[]>([]);
 
   useEffect(() => {
-    invoke('get_transactions').then(setTransactions).catch(() => {});
-    invoke('get_products').then(setProducts).catch(() => {});
+    invoke<any[]>('get_transactions').then(setTransactions).catch(() => {});
+    invoke<any[]>('get_products').then(setProducts).catch(() => {});
   }, []);
 
   const todayTransactions = transactions.filter(t => isToday(new Date(t.date)));
@@ -23,13 +24,14 @@ export function DashboardModule({ setActiveTab }: { setActiveTab: (tab: string) 
 
   // Last 7 days bars for the Reports card
   const today = startOfDay(new Date());
-  const dayLabels = ['M', 'T', 'W', 'T', 'F', 'S', 'S']; // matches Yoco
+  // Issue #7: Indonesian day abbreviations (Min=Minggu, Sen=Senin, …)
+  const dayLabels = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
   const weekBars = Array.from({ length: 7 }).map((_, i) => {
     const d = subDays(today, 6 - i);
     const total = transactions
       .filter(t => startOfDay(new Date(t.date)).getTime() === d.getTime())
       .reduce((s, t) => s + (t.total || 0), 0);
-    return { date: d, total, label: dayLabels[d.getDay() === 0 ? 6 : d.getDay() - 1] };
+    return { date: d, total, label: dayLabels[d.getDay()] };
   });
   const maxBar = Math.max(1, ...weekBars.map(b => b.total));
 
@@ -38,7 +40,8 @@ export function DashboardModule({ setActiveTab }: { setActiveTab: (tab: string) 
     label: string;
     metric: string;
     sub: string;
-    icon: React.ComponentType<{ className?: string }>;
+    icon: LucideIcon;
+    tone: string;
   }[] = [
     {
       id: 'products',
@@ -46,6 +49,7 @@ export function DashboardModule({ setActiveTab }: { setActiveTab: (tab: string) 
       metric: `${products.length}`,
       sub: 'Total',
       icon: Coffee,
+      tone: 'bg-brand/12 text-brand',
     },
     {
       id: 'transactions',
@@ -53,6 +57,7 @@ export function DashboardModule({ setActiveTab }: { setActiveTab: (tab: string) 
       metric: `Rp ${todayRevenue.toLocaleString('id-ID')}`,
       sub: 'Hari ini',
       icon: Receipt,
+      tone: 'bg-success/12 text-success',
     },
     {
       id: 'money',
@@ -60,6 +65,7 @@ export function DashboardModule({ setActiveTab }: { setActiveTab: (tab: string) 
       metric: `Rp ${monthRevenue.toLocaleString('id-ID')}`,
       sub: 'Bulan ini',
       icon: Wallet,
+      tone: 'bg-info/12 text-info',
     },
     {
       id: 'inventory',
@@ -67,6 +73,7 @@ export function DashboardModule({ setActiveTab }: { setActiveTab: (tab: string) 
       metric: `${products.reduce((s, p) => s + (p.stock || 0), 0)}`,
       sub: 'Unit stok',
       icon: Package,
+      tone: 'bg-warning/15 text-warning',
     },
   ];
 
@@ -82,18 +89,20 @@ export function DashboardModule({ setActiveTab }: { setActiveTab: (tab: string) 
       {/* Most visited */}
       <section className="space-y-4">
         <h3 className="text-[15px] font-semibold text-foreground/75">Sering dikunjungi</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 stagger">
           {tiles.map(tile => {
             const Icon = tile.icon;
             return (
               <button
                 key={tile.id}
                 onClick={() => setActiveTab(tile.id)}
-                className="group text-left bg-card hover:bg-accent/60 rounded-2xl p-5 h-[168px] flex flex-col justify-between transition-colors"
+                className="group text-left bg-card hover:bg-accent/60 rounded-2xl p-5 h-[168px] flex flex-col justify-between hover-lift ring-1 ring-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <div className="flex items-start justify-between">
                   <span className="text-[13px] font-medium text-foreground/75">{tile.label}</span>
-                  <Icon className="w-[18px] h-[18px] text-muted-foreground group-hover:text-foreground transition-colors" strokeWidth={1.8} />
+                  <span className={cn("flex size-8 items-center justify-center rounded-lg", tile.tone)}>
+                    <Icon className="w-[18px] h-[18px]" strokeWidth={1.9} />
+                  </span>
                 </div>
                 <div className="space-y-1">
                   <p className="text-2xl font-bold text-foreground tracking-tight truncate">{tile.metric}</p>
@@ -116,7 +125,7 @@ export function DashboardModule({ setActiveTab }: { setActiveTab: (tab: string) 
         </button>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Gross revenue chart — larger */}
-          <div className="lg:col-span-2 bg-card rounded-2xl p-6">
+          <div className="lg:col-span-2 bg-card rounded-2xl p-6 ring-1 ring-foreground/10">
             <p className="text-sm font-medium text-foreground/75 mb-5">Pendapatan Kotor</p>
             <div className="flex items-end gap-3 h-40">
               {weekBars.map((b, idx) => {
@@ -125,10 +134,11 @@ export function DashboardModule({ setActiveTab }: { setActiveTab: (tab: string) 
                   <div key={idx} className="flex-1 flex flex-col items-center gap-2">
                     <div
                       className={cn(
-                        "w-full rounded-md transition-all",
-                        b.total > 0 ? "bg-[color:var(--brand-blue)]" : "bg-muted"
+                        "w-full rounded-md bar-grow transition-colors hover:opacity-80",
+                        // Issue #21: replaced non-token --brand-blue with proper design token bg-info
+                      b.total > 0 ? "bg-info" : "bg-muted"
                       )}
-                      style={{ height: `${h}px` }}
+                      style={{ height: `${h}px`, animationDelay: `${0.1 + idx * 0.06}s` }}
                     />
                     <span className="text-[11px] text-muted-foreground font-medium">{b.label}</span>
                   </div>
@@ -144,7 +154,7 @@ export function DashboardModule({ setActiveTab }: { setActiveTab: (tab: string) 
           </div>
 
           {/* Product summary */}
-          <div className="bg-card rounded-2xl p-6 flex flex-col">
+          <div className="bg-card rounded-2xl p-6 flex flex-col ring-1 ring-foreground/10">
             <p className="text-sm font-medium text-foreground/75 mb-4">Laporan Produk</p>
             <div className="flex-1 flex flex-col justify-center gap-3">
               <div>
@@ -162,7 +172,7 @@ export function DashboardModule({ setActiveTab }: { setActiveTab: (tab: string) 
             </div>
             <button
               onClick={() => setActiveTab('reports')}
-              className="mt-4 text-xs font-semibold text-[color:var(--brand-blue)] hover:underline text-left"
+              className="mt-4 text-xs font-semibold text-info hover:underline text-left"
             >
               Lihat laporan lengkap →
             </button>
@@ -173,14 +183,14 @@ export function DashboardModule({ setActiveTab }: { setActiveTab: (tab: string) 
       {/* Quick access */}
       <section className="space-y-4">
         <h3 className="text-[15px] font-semibold text-foreground/75">Akses cepat</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 stagger">
           {quickAccess.map((item) => {
             const Icon = item.icon;
             return (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
-                className="group bg-card hover:bg-accent/60 rounded-2xl p-5 h-28 flex flex-col justify-between transition-colors text-left"
+                className="group bg-card hover:bg-accent/60 rounded-2xl p-5 h-28 flex flex-col justify-between hover-lift text-left ring-1 ring-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <Icon className="w-5 h-5 text-foreground/75" strokeWidth={1.8} />
                 <span className="text-sm font-semibold text-foreground">{item.label}</span>

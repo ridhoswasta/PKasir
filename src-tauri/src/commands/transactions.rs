@@ -125,7 +125,9 @@ pub fn create_transaction(
         rusqlite::params![id, date, input.subtotal, input.tax, input.service_charge, input.total, input.payment_method, input.amount_paid, input.change, input.customer, items_json, input.table_name, input.note, input.cashier, input.discount, input.discount_id, input.discount_name],
     ).map_err(|e| e.to_string())?;
 
-    // Update stock for each item
+    // Update stock for each item. The stock decrement is the existing,
+    // authoritative behaviour; movement logging + FEFO batch deduction are
+    // additive and best-effort (a failure there never blocks the sale).
     if let Some(items) = input.items.as_array() {
         for item in items {
             let qty = item.get("quantity").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -136,6 +138,23 @@ pub fn create_transaction(
                     rusqlite::params![qty, product_id],
                 )
                 .map_err(|e| e.to_string())?;
+
+                // Ledger + FEFO (opt-in, additive)
+                let balance: i64 = tx
+                    .query_row("SELECT COALESCE(stock,0) FROM products WHERE id = ?1", [product_id], |r| r.get(0))
+                    .unwrap_or(0);
+                let pname: Option<String> = tx
+                    .query_row("SELECT name FROM products WHERE id = ?1", [product_id], |r| r.get(0))
+                    .ok();
+                let tracks: i64 = tx
+                    .query_row("SELECT COALESCE(trackBatches,0) FROM products WHERE id = ?1", [product_id], |r| r.get(0))
+                    .unwrap_or(0);
+                let _ = crate::commands::inventory::record_movement(
+                    &tx, product_id, pname.as_deref(), None, "sale", -qty, Some(balance), Some(&id), None, input.cashier.as_deref(),
+                );
+                if tracks == 1 {
+                    let _ = crate::commands::inventory::fefo_deduct(&tx, product_id, qty);
+                }
             }
         }
     }

@@ -6,7 +6,9 @@ import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Plus, Minus, Trash2, CreditCard, Banknote, QrCode, Coffee, ShoppingCart, User, Armchair, Printer, CheckCircle2, UtensilsCrossed, Monitor, StickyNote, UserPlus, ChevronDown, Phone, X, Calculator, PauseCircle, Clock, PlayCircle, BookOpen, Percent, Tag } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Search, Plus, Minus, Trash2, CreditCard, Banknote, QrCode, Coffee, ShoppingCart, User, Armchair, Printer, CheckCircle2, UtensilsCrossed, Monitor, StickyNote, UserPlus, ChevronDown, Phone, X, Calculator, PauseCircle, Clock, PlayCircle, BookOpen, Percent, Tag, Star } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { invoke } from '@tauri-apps/api/core';
@@ -15,15 +17,22 @@ import { playAddToCart } from '../services/sound';
 import { useAuth } from '../services/auth';
 import type { ReceiptInput } from '../services/printer';
 import { logActivity } from '../services/activity';
+import { composeReceiptHeader, getShopName } from '../services/utils';
+import { deductIngredientsForSale, getAllProductCosts } from '../services/ingredientService';
 import { VirtualKeyboard } from './VirtualKeyboard';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { CalculatorDialog } from './CalculatorDialog';
+import { EmptyState } from '@/components/ui/empty-state';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { QRCodeDisplay } from './QRCodeDisplay';
 
 export function POSModule() {
   const { user } = useAuth();
   const [products, setProducts] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [cart, setCart] = useState<any[]>([]);
+  // Issue #18: raw search input (debounced into searchQuery below)
+  const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Semua');
   const [selectedCustomer, setSelectedCustomer] = useState('Walk-In Customer');
@@ -35,6 +44,8 @@ export function POSModule() {
   const [isCashDialogOpen, setIsCashDialogOpen] = useState(false);
   const [isQrisDialogOpen, setIsQrisDialogOpen] = useState(false);
   const [isCardDialogOpen, setIsCardDialogOpen] = useState(false);
+  // Dynamic QRIS: the generated QRIS string for the current transaction
+  const [dynamicQrisString, setDynamicQrisString] = useState<string>('');
   const [amountPaid, setAmountPaid] = useState<number | ''>('');
   const [paymentNote, setPaymentNote] = useState('');
   const [printingLast, setPrintingLast] = useState(false);
@@ -60,21 +71,37 @@ export function POSModule() {
   const [isShowMenuOpen, setIsShowMenuOpen] = useState(false);
   const [activeDiscounts, setActiveDiscounts] = useState<any[]>([]);
   const [selectedDiscount, setSelectedDiscount] = useState<any>(null);
+  // Issue #8: loading state for product fetch
+  const [productsLoading, setProductsLoading] = useState(true);
+  // Issue #2: pending confirm states replacing window.confirm()
+  const [pendingResumeHeld, setPendingResumeHeld] = useState<any>(null);
+  const [pendingDeleteHeld, setPendingDeleteHeld] = useState<any>(null);
+  // Issue #18: debounce ref for search input
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const displayChannelRef = useRef<BroadcastChannel | null>(null);
   const displayStateRef = useRef<any>({});
   const [lastPaymentForDisplay, setLastPaymentForDisplay] = useState<{ txId: string; total: number } | null>(null);
+  // Loyalty point redemption
+  const [useRedemption, setUseRedemption] = useState(false);
 
   const refreshSettings = () =>
     invoke('get_settings').then(setSettings).catch(() => {});
+
+  // Ingredient (recipe) cost per product. Effective HPP recorded on each sale
+  // item = product.costPrice (additional cost) + this ingredient cost.
+  const [recipeCosts, setRecipeCosts] = useState<Record<string, number>>({});
 
   const refreshHeldOrders = () => {
     invoke<any[]>('get_held_orders').then(setHeldOrders).catch(() => {});
   };
 
   useEffect(() => {
-    invoke('get_products').then(setProducts).catch(() => {});
+    // Issue #8: track loading state so skeleton is shown during fetch
+    setProductsLoading(true);
+    invoke<any[]>('get_products').then((data) => { setProducts(data); setProductsLoading(false); }).catch(() => setProductsLoading(false));
+    getAllProductCosts().then(setRecipeCosts).catch(() => {});
     refreshSettings();
-    invoke('get_customers').then(setCustomers).catch(() => {});
+    invoke<any[]>('get_customers').then(setCustomers).catch(() => {});
     refreshHeldOrders();
     invoke<any[]>('get_active_discounts').then(setActiveDiscounts).catch(() => {});
 
@@ -82,6 +109,50 @@ export function POSModule() {
     window.addEventListener('settings-updated', onUpdate);
     return () => window.removeEventListener('settings-updated', onUpdate);
   }, []);
+
+  // Issue #19: keyboard shortcuts for common POS actions
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Don't trigger if focus is on an input/textarea/select
+      const tag = (e.target as HTMLElement).tagName;
+      const isEditing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target as HTMLElement).isContentEditable;
+
+      // Ctrl+F or / → focus search
+      if ((e.key === '/' || (e.ctrlKey && e.key === 'f')) && !isEditing) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        return;
+      }
+      // F5 → open cash payment dialog
+      if (e.key === 'F5' && !isEditing) {
+        e.preventDefault();
+        if (cart.length > 0 && !isCashDialogOpen) {
+          setPaymentNote('');
+          setIsCashDialogOpen(true);
+        }
+        return;
+      }
+      // Ctrl+H → hold order
+      if (e.ctrlKey && e.key === 'h' && !isEditing) {
+        e.preventDefault();
+        if (cart.length > 0) {
+          setHoldLabel('');
+          setIsHoldDialogOpen(true);
+        }
+        return;
+      }
+      // Escape → close any open payment dialog
+      if (e.key === 'Escape') {
+        if (isCashDialogOpen) setIsCashDialogOpen(false);
+        if (isQrisDialogOpen) setIsQrisDialogOpen(false);
+        if (isCardDialogOpen) setIsCardDialogOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [cart, isCashDialogOpen, isQrisDialogOpen, isCardDialogOpen]);
 
   const categories = ['Semua', ...(settings.productCategories || [])];
 
@@ -108,7 +179,8 @@ export function POSModule() {
         productId: product.id,
         name: product.name,
         price: product.price + (variant?.price || 0),
-        costPrice: product.costPrice || 0,
+        // Effective HPP: additional cost (manual) + ingredient cost from recipe
+        costPrice: (product.costPrice || 0) + (recipeCosts[product.id] || 0),
         variantName: variant?.name,
         image: product.image || undefined,
         quantity: 1
@@ -145,7 +217,7 @@ export function POSModule() {
       const receipt: ReceiptInput = {
         txId: last.id,
         txDate: last.date,
-        header: (settings.receiptHeader || '').replace(/\\n/g, '\n'),
+        header: composeReceiptHeader(settings),
         footer: (settings.receiptFooter || '').replace(/\\n/g, '\n'),
         customer: last.customer,
         tableName: last.tableName,
@@ -279,7 +351,21 @@ export function POSModule() {
         : Math.min(selectedDiscount.value, total))
     : 0;
   const discountedTotal = Math.max(0, total - discountAmount);
-  const change = typeof amountPaid === 'number' ? amountPaid - discountedTotal : 0;
+
+  // ─── Loyalty calculations ───
+  const loyaltyEnabled = !!settings.loyaltyEnabled;
+  const pointMultiplier: number = settings.pointMultiplier || 1000;   // Rp per 1 point earned
+  const redeemRate: number = settings.redeemRate || 100;              // Rp per 1 point redeemed
+  const minRedeemPoints: number = settings.minRedeemPoints || 100;
+  const selectedCustomerObj = customers.find((c: any) => c.name === selectedCustomer) || null;
+  const customerPoints: number = selectedCustomerObj?.points || 0;
+  const canRedeem = loyaltyEnabled && selectedCustomerObj && customerPoints >= minRedeemPoints;
+  const redemptionDiscount = (useRedemption && canRedeem) ? Math.min(customerPoints * redeemRate, discountedTotal) : 0;
+  const finalPayable = Math.max(0, discountedTotal - redemptionDiscount);
+  const pointsRedeemed = (useRedemption && canRedeem) ? Math.floor(redemptionDiscount / redeemRate) : 0;
+  const pointsEarned = loyaltyEnabled && selectedCustomerObj ? Math.floor(finalPayable / pointMultiplier) : 0;
+
+  const change = typeof amountPaid === 'number' ? amountPaid - finalPayable : 0;
 
   // ─── Customer Display: BroadcastChannel sync ───
   // Keep displayStateRef current so the 'ready' handler can send latest state
@@ -293,12 +379,26 @@ export function POSModule() {
       customer: selectedCustomer !== 'Walk-In Customer' ? selectedCustomer : undefined,
       tableName: selectedTable || undefined,
       logo: settings.logo,
-      header: (settings.receiptHeader || '').split('\n')[0] || '',
+      header: getShopName(settings),
+      address: settings.shopAddress || '',
       displayPhotos: settings.displayPhotos || [],
       displaySlideshowInterval: settings.displaySlideshowInterval || 5,
       lastPayment: lastPaymentForDisplay,
       qrisPayment: isQrisDialogOpen
-        ? { total: discountedTotal, qrisImage: settings.qrisImage || '' }
+        ? {
+            total: discountedTotal,
+            // Static mode → send the uploaded image; dynamic mode → send the generated string
+            qrisImage:
+              settings.qrisEnabled && (settings.qrisMode || 'static') === 'static'
+                ? settings.qrisImage || ''
+                : '',
+            qrisString:
+              settings.qrisEnabled &&
+              (settings.qrisMode || 'static') === 'dynamic' &&
+              dynamicQrisString
+                ? dynamicQrisString
+                : undefined,
+          }
         : null,
       showMenu: isShowMenuOpen
         ? {
@@ -314,7 +414,7 @@ export function POSModule() {
           }
         : null,
     };
-  }, [cart, subtotal, tax, serviceCharge, discountedTotal, discountAmount, selectedDiscount, selectedCustomer, selectedTable, settings, lastPaymentForDisplay, isQrisDialogOpen, isShowMenuOpen, products]);
+  }, [cart, subtotal, tax, serviceCharge, discountedTotal, discountAmount, selectedDiscount, selectedCustomer, selectedTable, settings, lastPaymentForDisplay, isQrisDialogOpen, isShowMenuOpen, products, dynamicQrisString]);
 
   // Set up channel once; broadcast on state changes + respond to 'ready'
   useEffect(() => {
@@ -331,7 +431,35 @@ export function POSModule() {
   // Broadcast whenever displayable state changes
   useEffect(() => {
     displayChannelRef.current?.postMessage({ type: 'update', data: displayStateRef.current });
-  }, [cart, subtotal, tax, serviceCharge, discountedTotal, discountAmount, selectedDiscount, selectedCustomer, selectedTable, settings, lastPaymentForDisplay, isQrisDialogOpen, isShowMenuOpen, products]);
+  }, [cart, subtotal, tax, serviceCharge, discountedTotal, discountAmount, selectedDiscount, selectedCustomer, selectedTable, settings, lastPaymentForDisplay, isQrisDialogOpen, isShowMenuOpen, products, dynamicQrisString]);
+
+  // ─── Dynamic QRIS generation ──────────────────────────────────────────
+  // Runs whenever the QRIS dialog opens with dynamic mode enabled.
+  // Clears the string when dialog closes or mode is not dynamic.
+  useEffect(() => {
+    if (!isQrisDialogOpen) {
+      setDynamicQrisString('');
+      return;
+    }
+    // Only generate when mode is explicitly 'dynamic' (default is 'static')
+    const isDynamic = (settings.qrisMode || 'static') === 'dynamic';
+    if (!settings.qrisEnabled || !isDynamic || !settings.qrisStatic) {
+      setDynamicQrisString('');
+      return;
+    }
+    // finalPayable is the amount after all discounts and loyalty redemptions
+    invoke<string>('generate_dynamic_qris', {
+      staticQris: settings.qrisStatic,
+      amount: Math.round(finalPayable),
+    })
+      .then((result) => setDynamicQrisString(result))
+      .catch((err) => {
+        console.error('generate_dynamic_qris error:', err);
+        toast.error('Gagal membuat QRIS dinamis: ' + (err?.message || String(err)));
+        setDynamicQrisString('');
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isQrisDialogOpen, settings.qrisEnabled, settings.qrisMode, settings.qrisStatic, finalPayable]);
 
   const handleQuickAddCustomer = async () => {
     const name = quickCustomerName.trim();
@@ -397,6 +525,7 @@ export function POSModule() {
       // Clear cart
       setCart([]);
       setSelectedDiscount(null);
+      setUseRedemption(false);
       setSelectedCustomer('Walk-In Customer');
       setSelectedTable('');
       setHoldLabel('');
@@ -408,10 +537,9 @@ export function POSModule() {
     }
   };
 
-  const handleResumeHeld = async (h: any) => {
-    if (cart.length > 0) {
-      if (!confirm('Keranjang saat ini berisi item lain. Lanjutkan pesanan ditahan akan MENGGANTI keranjang. Lanjutkan?')) return;
-    }
+  // Issue #2: replaced window.confirm() with ConfirmDialog state
+  const doResumeHeld = async (h: any) => {
+    setPendingResumeHeld(null);
     try {
       setCart((h.items || []).map((i: any) => ({
         productId: i.productId,
@@ -435,8 +563,20 @@ export function POSModule() {
     }
   };
 
+  const handleResumeHeld = (h: any) => {
+    if (cart.length > 0) {
+      setPendingResumeHeld(h);
+    } else {
+      doResumeHeld(h);
+    }
+  };
+
   const handleDeleteHeld = async (h: any) => {
-    if (!confirm(`Hapus pesanan ditahan "${h.label || h.id}"? Tindakan ini tidak bisa dibatalkan.`)) return;
+    setPendingDeleteHeld(h);
+  };
+
+  const doDeleteHeld = async (h: any) => {
+    setPendingDeleteHeld(null);
     try {
       await invoke('delete_held_order', { id: h.id });
       logActivity('Hapus Pesanan Ditahan', h.label || h.id);
@@ -476,28 +616,64 @@ export function POSModule() {
     setProcessing(true);
 
     try {
-      const finalTotal = paidAmount === undefined ? discountedTotal : discountedTotal; // use discounted for non-cash
+      // finalPayable accounts for loyalty redemption discount on top of promo discounts
       const transaction: any = await invoke('create_transaction', {
         input: {
           items: cart,
           subtotal,
           tax,
           serviceCharge,
-          total: discountedTotal,
+          total: finalPayable,
           paymentMethod,
-          amountPaid: paidAmount || discountedTotal,
+          amountPaid: paidAmount || finalPayable,
           change: changeAmount || 0,
           customer: selectedCustomer,
           tableName: selectedTable || null,
           note: note || null,
           cashier: user?.displayName || null,
-          discount: discountAmount || 0,
+          discount: (discountAmount || 0) + redemptionDiscount,
           discountId: selectedDiscount?.id || null,
-          discountName: selectedDiscount?.name || null,
+          discountName: selectedDiscount ? selectedDiscount.name + (redemptionDiscount > 0 ? ' + Poin' : '') : (redemptionDiscount > 0 ? 'Redeem Poin' : null),
         }
       });
 
-      logActivity('Transaksi Baru', `#${transaction.id}`, `Total: Rp ${discountedTotal.toLocaleString('id-ID')}, ${paymentMethod}${selectedDiscount ? ` (Diskon: ${selectedDiscount.name})` : ''}`);
+      // ─── Update customer loyalty points ───────────────────────────────
+      if (loyaltyEnabled && selectedCustomerObj) {
+        const newPoints = Math.max(0, customerPoints - pointsRedeemed) + pointsEarned;
+        try {
+          await invoke('update_customer', {
+            id: selectedCustomerObj.id,
+            input: {
+              name: selectedCustomerObj.name,
+              phone: selectedCustomerObj.phone || null,
+              points: newPoints,
+            },
+          });
+          // Show loyalty summary toast
+          const parts: string[] = [];
+          if (pointsRedeemed > 0) parts.push(`Poin digunakan: ${pointsRedeemed}`);
+          if (pointsEarned > 0) parts.push(`Poin didapat: +${pointsEarned}`);
+          parts.push(`Saldo: ${newPoints} poin`);
+          toast.info(parts.join(' | '), { duration: 4000 });
+        } catch (e: any) {
+          console.error('Failed to update customer points:', e);
+        }
+        // refresh customers list
+        invoke<any[]>('get_customers').then(setCustomers).catch(() => {});
+      }
+
+      // ─── Deduct ingredient stock for the sale ─────────────────────────────
+      // Warn but never block checkout if deduction fails or stock goes negative
+      try {
+        await deductIngredientsForSale(
+          cart.map((item: any) => ({ productId: item.productId, quantity: item.quantity })),
+        );
+      } catch (e: any) {
+        console.warn('Ingredient deduction warning:', e);
+        toast.warning('Stok bahan baku tidak berhasil dikurangi otomatis. Cek menu Bahan Baku.', { duration: 4000 });
+      }
+
+      logActivity('Transaksi Baru', `#${transaction.id}`, `Total: Rp ${finalPayable.toLocaleString('id-ID')}, ${paymentMethod}${selectedDiscount ? ` (Diskon: ${selectedDiscount.name})` : ''}${redemptionDiscount > 0 ? ` (Redeem ${pointsRedeemed} poin)` : ''}`);
 
       {
         // Show prominent success overlay
@@ -519,7 +695,7 @@ export function POSModule() {
           const receiptInput = {
             txId: transaction.id,
             txDate: transaction.date,
-            header: (settings.receiptHeader || '').replace(/\\n/g, '\n'),
+            header: composeReceiptHeader(settings),
             footer: (settings.receiptFooter || '').replace(/\\n/g, '\n'),
             customer: selectedCustomer,
             tableName: selectedTable || undefined,
@@ -559,9 +735,10 @@ export function POSModule() {
             }
             setCart([]);
             setSelectedDiscount(null);
+            setUseRedemption(false);
             setSelectedCustomer('Walk-In Customer');
             setSelectedTable('');
-            invoke('get_products').then(setProducts).catch(() => {});
+            invoke<any[]>('get_products').then(setProducts).catch(() => {});
             return;
           }
 
@@ -584,7 +761,7 @@ export function POSModule() {
           setSelectedDiscount(null);
           setSelectedCustomer('Walk-In Customer');
           setSelectedTable('');
-          invoke('get_products').then(setProducts).catch(() => {});
+          invoke<any[]>('get_products').then(setProducts).catch(() => {});
           return;
         }
 
@@ -621,16 +798,18 @@ export function POSModule() {
           setSelectedDiscount(null);
           setSelectedCustomer('Walk-In Customer');
           setSelectedTable('');
-          invoke('get_products').then(setProducts).catch(() => {});
+          invoke<any[]>('get_products').then(setProducts).catch(() => {});
           return;
         }
 
         const receiptWindow = window.open('', '_blank');
         if (receiptWindow) {
+          // Issue #22: escape dynamic values to prevent HTML injection
+          const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
           receiptWindow.document.write(`
             <html>
               <head>
-                <title>Struk #${transaction.id}</title>
+                <title>Struk #${esc(String(transaction.id))}</title>
                 <style>
                   body { font-family: monospace; padding: 20px; width: ${settings.paperWidth || '80mm'}; margin: 0 auto; }
                   .header { text-align: center; margin-bottom: 20px; white-space: pre-wrap; }
@@ -643,15 +822,15 @@ export function POSModule() {
               </head>
               <body>
                 ${settings.logo ? `<img src="${settings.logo}" class="logo" alt="Logo" />` : ''}
-                <div class="header">${(settings.receiptHeader || 'CAFE POS').replace(/\\n/g, '\n')}\n\nStruk #${transaction.id}\n${new Date(transaction.date || Date.now()).toLocaleString('id-ID')}</div>
+                <div class="header">${esc(composeReceiptHeader(settings))}\n\nStruk #${esc(String(transaction.id))}\n${new Date(transaction.date || Date.now()).toLocaleString('id-ID')}</div>
                 <div class="divider"></div>
-                ${user?.displayName ? `<div class="item"><span>Kasir:</span><span>${user.displayName}</span></div>` : ''}
-                <div class="item"><span>Pelanggan:</span><span>${selectedCustomer}</span></div>
-                ${selectedTable ? `<div class="item"><span>Meja:</span><span>${selectedTable}</span></div>` : ''}
+                ${user?.displayName ? `<div class="item"><span>Kasir:</span><span>${esc(user.displayName)}</span></div>` : ''}
+                <div class="item"><span>Pelanggan:</span><span>${esc(selectedCustomer)}</span></div>
+                ${selectedTable ? `<div class="item"><span>Meja:</span><span>${esc(selectedTable)}</span></div>` : ''}
                 <div class="divider"></div>
                 ${cart.map(item => `
                   <div class="item">
-                    <span>${item.quantity}x ${item.name} ${item.variantName ? `(${item.variantName})` : ''}</span>
+                    <span>${esc(String(item.quantity))}x ${esc(item.name)} ${item.variantName ? `(${esc(item.variantName)})` : ''}</span>
                     <span>Rp ${((item.price || 0) * item.quantity).toLocaleString('id-ID')}</span>
                   </div>
                 `).join('')}
@@ -668,7 +847,7 @@ export function POSModule() {
                   <div class="item"><span>Kembalian</span><span>Rp ${(changeAmount || 0).toLocaleString('id-ID')}</span></div>
                 ` : ''}
                 <div class="divider"></div>
-                <div class="footer">${(settings.receiptFooter || 'Terima Kasih').replace(/\\n/g, '\n')}</div>
+                <div class="footer">${esc((settings.receiptFooter || 'Terima Kasih').replace(/\\n/g, '\n'))}</div>
               </body>
             </html>
           `);
@@ -678,27 +857,51 @@ export function POSModule() {
 
         setCart([]);
         setSelectedDiscount(null);
+        setUseRedemption(false);
         setSelectedCustomer('Walk-In Customer');
         setSelectedTable('');
-        invoke('get_products').then(setProducts).catch(() => {});
+        invoke<any[]>('get_products').then((updatedProducts) => {
+          setProducts(updatedProducts);
+          // ─── Low-stock email alert check ─────────────────────────────
+          if (settings.emailAlertEnabled && settings.smtpHost && settings.emailRecipient) {
+            const threshold = settings.lowStockThreshold ?? 5;
+            const storeName = getShopName(settings);
+            const lowItems = updatedProducts.filter((p: any) => (p.stock ?? 0) <= threshold && (p.stock ?? 0) >= 0);
+            if (lowItems.length > 0) {
+              const subject = `[${storeName}] Peringatan Stok Menipis — ${lowItems.length} produk`;
+              const bodyLines = [
+                `Laporan Stok Menipis`,
+                `Toko: ${storeName}`,
+                `Waktu: ${new Date().toLocaleString('id-ID')}`,
+                ``,
+                `Produk dengan stok di bawah atau sama dengan ambang batas (${threshold}):`,
+                ``,
+                ...lowItems.map((p: any) => `- ${p.name}: ${p.stock ?? 0} ${p.unit || 'pcs'} tersisa`),
+                ``,
+                `Harap segera lakukan pengisian stok.`,
+              ];
+              invoke('send_email', {
+                smtpHost: settings.smtpHost,
+                smtpPort: settings.smtpPort ?? 587,
+                useTls: !!(settings.smtpUseTls ?? 1),
+                username: settings.smtpUsername || '',
+                password: settings.smtpPassword || '',
+                from: settings.smtpFrom || settings.emailRecipient,
+                to: settings.emailRecipient,
+                subject,
+                body: bodyLines.join('\n'),
+              }).catch(() => {}); // fire-and-forget, no blocking toast
+            }
+          }
+        }).catch(() => {});
       }
-    } catch (error) {
-      toast.error('Transaksi Gagal');
+    } catch (error: any) {
+      // Issue #20: include backend error detail instead of a generic message
+      toast.error('Transaksi Gagal: ' + (error?.message || String(error)));
     } finally {
       setProcessing(false);
     }
   };
-
-  const CATEGORY_COLORS = [
-    'from-orange-500 to-amber-400',
-    'from-emerald-500 to-teal-400',
-    'from-blue-500 to-cyan-400',
-    'from-pink-500 to-rose-400',
-    'from-violet-500 to-purple-400',
-    'from-amber-500 to-yellow-400',
-    'from-cyan-500 to-sky-400',
-    'from-red-500 to-orange-400',
-  ];
 
   const categoryProductCount = (cat: string) =>
     cat === 'Semua' ? products.length : products.filter(p => p.category === cat).length;
@@ -713,10 +916,17 @@ export function POSModule() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground w-4 h-4" />
             <input
               type="text"
-              placeholder="Cari produk..."
+              placeholder="Cari produk... (/ untuk fokus)"
               className="w-full h-10 pl-9 pr-3 rounded-xl bg-card border border-border text-sm text-foreground placeholder:text-muted-foreground/80 focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-ring/50 transition-all"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              ref={searchInputRef}
+              value={searchInput}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSearchInput(val);
+                // Issue #18: debounce search by 180ms to avoid re-filtering on every keystroke
+                if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+                searchDebounceRef.current = setTimeout(() => setSearchQuery(val), 180);
+              }}
               onFocus={() => settings.virtualKeyboard && setFocusedInput('search')}
               onBlur={() => setTimeout(() => setFocusedInput((prev) => prev === 'search' ? null : prev), 100)}
             />
@@ -749,7 +959,22 @@ export function POSModule() {
 
         {/* Product grid */}
         <div className="flex-1 overflow-y-auto min-h-0 px-5 pb-5">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+          {/* Issue #8: show skeleton cards while products are loading */}
+          {productsLoading ? (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+              {Array.from({ length: 10 }).map((_, i) => (
+                <div key={i} className="aspect-square flex flex-col bg-card rounded-2xl border border-border overflow-hidden">
+                  <Skeleton className="flex-1" />
+                  <div className="p-3 space-y-1.5">
+                    <Skeleton className="h-3.5 w-3/4 rounded" />
+                    <Skeleton className="h-3.5 w-1/2 rounded" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 stagger">
             {filteredProducts.map(product => (
               <button
                 key={product.id}
@@ -769,11 +994,11 @@ export function POSModule() {
                     </div>
                   )}
                   {product.stock === 0 ? (
-                    <span className="absolute top-2 right-2 bg-gray-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md">
+                    <span className="absolute top-2 right-2 bg-muted-foreground text-background text-[10px] font-bold px-1.5 py-0.5 rounded-md">
                       Habis
                     </span>
                   ) : product.stock <= 10 && (
-                    <span className="absolute top-2 right-2 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md">
+                    <span className="absolute top-2 right-2 bg-destructive text-destructive-foreground text-[10px] font-bold px-1.5 py-0.5 rounded-md">
                       Sisa {product.stock}
                     </span>
                   )}
@@ -786,22 +1011,22 @@ export function POSModule() {
             ))}
           </div>
           {filteredProducts.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <Coffee className="w-12 h-12 mb-3 opacity-40" />
-              <p className="text-sm">Tidak ada produk ditemukan</p>
-            </div>
+            <EmptyState icon={Coffee} title="Tidak ada produk ditemukan" />
+          )}
+            </>
           )}
         </div>
 
         {/* Bottom action bar — enterprise POS-style colorful quick-action tiles */}
         <div className="shrink-0 grid grid-cols-6 gap-1.5 px-3 py-2.5 bg-background border-t border-border/70">
-          {/* Order Dapur — amber */}
+          {/* Order Dapur — warning */}
           <button
             type="button"
             onClick={handlePrintKitchenOrder}
             disabled={printingKitchen}
+            aria-label="Cetak Order Dapur"
             title={printingKitchen ? 'Mencetak order dapur...' : 'Cetak Order Dapur'}
-            className="h-16 rounded-xl bg-amber-500 hover:bg-amber-600 active:bg-amber-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold shadow-md shadow-amber-900/20 ring-1 ring-amber-400/40 transition-all active:scale-[0.97] inline-flex flex-col items-center justify-center gap-1 px-2"
+            className="h-16 rounded-xl bg-warning hover:bg-warning/90 active:bg-warning/80 disabled:opacity-60 disabled:cursor-not-allowed text-warning-foreground font-bold shadow-md ring-1 ring-warning/40 transition-all active:scale-[0.97] inline-flex flex-col items-center justify-center gap-1 px-2"
           >
             <UtensilsCrossed className={`w-5 h-5 ${printingKitchen ? 'animate-pulse' : ''}`} />
             <span className="text-[11px] leading-tight text-center whitespace-nowrap">
@@ -809,13 +1034,14 @@ export function POSModule() {
             </span>
           </button>
 
-          {/* Struk Terakhir — blue */}
+          {/* Struk Terakhir — info */}
           <button
             type="button"
             onClick={handlePrintLastReceipt}
             disabled={printingLast}
+            aria-label="Cetak Struk Terakhir"
             title={printingLast ? 'Mencetak struk...' : 'Cetak Struk Terakhir'}
-            className="h-16 rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold shadow-md shadow-blue-900/30 ring-1 ring-blue-400/40 transition-all active:scale-[0.97] inline-flex flex-col items-center justify-center gap-1 px-2"
+            className="h-16 rounded-xl bg-info hover:bg-info/90 active:bg-info/80 disabled:opacity-60 disabled:cursor-not-allowed text-info-foreground font-bold shadow-md ring-1 ring-info/40 transition-all active:scale-[0.97] inline-flex flex-col items-center justify-center gap-1 px-2"
           >
             <Printer className={`w-5 h-5 ${printingLast ? 'animate-pulse' : ''}`} />
             <span className="text-[11px] leading-tight text-center whitespace-nowrap">
@@ -823,50 +1049,61 @@ export function POSModule() {
             </span>
           </button>
 
-          {/* Customer Display — violet */}
+          {/* Customer Display — brand */}
           <button
             type="button"
             onClick={openCustomerDisplay}
+            aria-label="Customer Display"
             title="Customer Display"
-            className="h-16 rounded-xl bg-violet-600 hover:bg-violet-700 active:bg-violet-800 text-white font-bold shadow-md shadow-violet-900/30 ring-1 ring-violet-400/40 transition-all active:scale-[0.97] inline-flex flex-col items-center justify-center gap-1 px-2"
+            className="h-16 rounded-xl bg-brand hover:bg-brand/90 active:bg-brand/80 text-brand-foreground font-bold shadow-md ring-1 ring-brand/40 transition-all active:scale-[0.97] inline-flex flex-col items-center justify-center gap-1 px-2"
           >
             <Monitor className="w-5 h-5" />
             <span className="text-[11px] leading-tight text-center whitespace-nowrap">Customer Display</span>
           </button>
 
-          {/* Tampilkan Menu — emerald */}
+          {/* Tampilkan Menu — success / active indicator (Issue #17) */}
           <button
             type="button"
-            onClick={() => setIsShowMenuOpen(true)}
-            title="Tampilkan Menu di Customer Display"
-            className="h-16 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold shadow-md shadow-emerald-900/30 ring-1 ring-emerald-400/40 transition-all active:scale-[0.97] inline-flex flex-col items-center justify-center gap-1 px-2"
+            onClick={() => setIsShowMenuOpen(!isShowMenuOpen)}
+            aria-label={isShowMenuOpen ? 'Menu Aktif — klik untuk tutup' : 'Tampilkan Menu di Customer Display'}
+            title={isShowMenuOpen ? 'Menu Aktif — klik untuk tutup' : 'Tampilkan Menu di Customer Display'}
+            className={cn(
+              "h-16 rounded-xl font-bold shadow-md transition-all active:scale-[0.97] inline-flex flex-col items-center justify-center gap-1 px-2",
+              isShowMenuOpen
+                ? "bg-success text-success-foreground ring-2 ring-success ring-offset-1"
+                : "bg-success hover:bg-success/90 active:bg-success/80 text-success-foreground ring-1 ring-success/40"
+            )}
           >
             <BookOpen className="w-5 h-5" />
-            <span className="text-[11px] leading-tight text-center whitespace-nowrap">Tampilkan Menu</span>
+            <span className="text-[11px] leading-tight text-center whitespace-nowrap">
+              {isShowMenuOpen ? 'Menu Aktif ✓' : 'Tampilkan Menu'}
+            </span>
           </button>
 
-          {/* Kalkulator — cyan */}
+          {/* Kalkulator — muted/neutral (Issue #5: differentiated from Struk Terakhir which keeps bg-info) */}
           <button
             type="button"
             onClick={() => setIsCalculatorOpen(true)}
+            aria-label="Kalkulator"
             title="Kalkulator"
-            className="h-16 rounded-xl bg-cyan-600 hover:bg-cyan-700 active:bg-cyan-800 text-white font-bold shadow-md shadow-cyan-900/30 ring-1 ring-cyan-400/40 transition-all active:scale-[0.97] inline-flex flex-col items-center justify-center gap-1 px-2"
+            className="h-16 rounded-xl bg-muted hover:bg-muted/70 active:bg-muted/60 text-foreground font-bold shadow-md ring-1 ring-border transition-all active:scale-[0.97] inline-flex flex-col items-center justify-center gap-1 px-2"
           >
             <Calculator className="w-5 h-5" />
             <span className="text-[11px] leading-tight text-center whitespace-nowrap">Kalkulator</span>
           </button>
 
-          {/* Pesanan Ditahan — rose (with badge) */}
+          {/* Pesanan Ditahan — secondary/neutral (Issue #6: was destructive red, reserved for actual deletions) */}
           <button
             type="button"
             onClick={() => setIsHeldListOpen(true)}
+            aria-label={`Pesanan Ditahan${heldOrders.length > 0 ? ` (${heldOrders.length})` : ''}`}
             title={`Pesanan Ditahan${heldOrders.length > 0 ? ` (${heldOrders.length})` : ''}`}
-            className="relative h-16 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold shadow-md shadow-rose-900/30 ring-1 ring-rose-400/40 transition-all active:scale-[0.97] inline-flex flex-col items-center justify-center gap-1 px-2"
+            className="relative h-16 rounded-xl bg-secondary hover:bg-secondary/80 active:bg-secondary/70 text-secondary-foreground font-bold shadow-md ring-1 ring-border transition-all active:scale-[0.97] inline-flex flex-col items-center justify-center gap-1 px-2"
           >
             <Clock className="w-5 h-5" />
             <span className="text-[11px] leading-tight text-center whitespace-nowrap">Pesanan Ditahan</span>
             {heldOrders.length > 0 && (
-              <span className="absolute top-1.5 right-1.5 bg-white text-rose-700 text-[10px] font-extrabold rounded-full min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center leading-none shadow ring-2 ring-rose-700">
+              <span className="absolute top-1.5 right-1.5 bg-warning text-warning-foreground text-[10px] font-extrabold rounded-full min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center leading-none shadow">
                 {heldOrders.length}
               </span>
             )}
@@ -875,7 +1112,8 @@ export function POSModule() {
       </div>
 
       {/* ─── Cart Panel ─── */}
-      <div className="w-[360px] bg-card border-l border-border/70 flex flex-col h-full shrink-0">
+      {/* Issue #10: responsive cart width instead of fixed 360px */}
+      <div className="w-[320px] xl:w-[360px] bg-card border-l border-border/70 flex flex-col h-full shrink-0">
         {/* Cart header */}
         <div className="px-5 pt-5 pb-4 space-y-3 border-b border-border/70">
           <h2 className="text-base font-bold text-foreground flex items-center gap-2">
@@ -924,15 +1162,16 @@ export function POSModule() {
                   <button
                     type="button"
                     onClick={() => setSelectedTable('')}
+                    aria-label="Hapus pilihan meja"
                     title="Hapus pilihan meja"
-                    className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-muted-foreground hover:text-red-500 transition-colors"
+                    className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-muted-foreground hover:text-destructive transition-colors"
                   >
                     <Trash2 className="w-3 h-3" />
                     Hapus
                   </button>
                 )}
               </div>
-              <Select value={selectedTable || '__none__'} onValueChange={(v) => setSelectedTable(v === '__none__' ? '' : v)}>
+              <Select value={selectedTable || '__none__'} onValueChange={(v) => setSelectedTable(v && v !== '__none__' ? v : '')}>
                 <SelectTrigger className="h-9 w-full text-xs bg-muted hover:bg-accent/70 border-border hover:border-foreground/30 text-foreground rounded-lg transition-colors data-[state=open]:border-ring/60 data-[state=open]:ring-2 data-[state=open]:ring-ring/30">
                   <Armchair className={`w-3.5 h-3.5 shrink-0 ${selectedTable ? 'text-foreground/75' : 'text-muted-foreground'}`} />
                   <span className={`truncate flex-1 text-left font-medium ${selectedTable ? 'text-foreground' : 'text-muted-foreground'}`}>
@@ -977,15 +1216,20 @@ export function POSModule() {
                     <div className="flex-1 min-w-0">
                       <h4 className="text-sm font-medium text-foreground truncate">{item.name}</h4>
                       {item.variantName && <p className="text-[11px] text-muted-foreground">{item.variantName}</p>}
+                      {/* Issue #11: show per-unit price when qty > 1 */}
+                      {item.quantity > 1 && (
+                        <p className="text-xs text-muted-foreground mt-0.5">Rp {(item.price || 0).toLocaleString('id-ID')} × {item.quantity}</p>
+                      )}
                       <p className="text-sm text-foreground/85 font-semibold mt-0.5">Rp {((item.price || 0) * item.quantity).toLocaleString('id-ID')}</p>
                     </div>
                     <button
                       className={cn(
                         "h-7 w-7 rounded-md flex items-center justify-center transition-colors shrink-0",
                         item.note
-                          ? "bg-amber-500/15 text-amber-600 hover:bg-amber-500/25"
+                          ? "bg-warning/15 text-warning hover:bg-warning/25"
                           : "text-muted-foreground hover:bg-muted hover:text-foreground"
                       )}
+                      aria-label={item.note ? 'Edit catatan' : 'Tambah catatan'}
                       title={item.note ? 'Edit catatan' : 'Tambah catatan'}
                       onClick={() => { setNoteEditingIndex(index); setNoteDraft(item.note || ''); }}
                     >
@@ -994,13 +1238,15 @@ export function POSModule() {
                     <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5 border border-border">
                       <button
                         className="h-7 w-7 rounded-md flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                        aria-label={item.quantity === 1 ? 'Hapus item' : 'Kurangi jumlah'}
                         onClick={() => updateQuantity(index, -1)}
                       >
-                        {item.quantity === 1 ? <Trash2 className="w-3.5 h-3.5 text-red-500" /> : <Minus className="w-3.5 h-3.5" />}
+                        {item.quantity === 1 ? <Trash2 className="w-3.5 h-3.5 text-destructive" /> : <Minus className="w-3.5 h-3.5" />}
                       </button>
                       <span className="w-7 text-center text-sm font-bold text-foreground">{item.quantity}</span>
                       <button
                         className="h-7 w-7 rounded-md flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                        aria-label="Tambah jumlah"
                         onClick={() => updateQuantity(index, 1)}
                       >
                         <Plus className="w-3.5 h-3.5" />
@@ -1008,7 +1254,7 @@ export function POSModule() {
                     </div>
                   </div>
                   {item.note && (
-                    <div className="mt-1.5 text-[11px] text-amber-600 italic bg-amber-500/10 border-l-2 border-amber-500/40 pl-2 py-1 rounded-r">
+                    <div className="mt-1.5 text-[11px] text-warning italic bg-warning/10 border-l-2 border-warning/40 pl-2 py-1 rounded-r">
                       {item.note}
                     </div>
                   )}
@@ -1046,26 +1292,48 @@ export function POSModule() {
                 <span>-Rp {discountAmount.toLocaleString('id-ID')}</span>
               </div>
             )}
+            {/* Loyalty redemption line item */}
+            {redemptionDiscount > 0 && (
+              <div className="flex justify-between text-warning font-semibold">
+                <span className="flex items-center gap-1">
+                  <Star className="w-3.5 h-3.5" />
+                  Redeem Poin ({pointsRedeemed} poin)
+                </span>
+                <span>-Rp {redemptionDiscount.toLocaleString('id-ID')}</span>
+              </div>
+            )}
             <div className="border-t border-border pt-2 mt-2 flex justify-between items-baseline">
               <span className="text-base font-bold text-foreground/80">Total</span>
               <div className="text-right">
-                {discountAmount > 0 && (
+                {(discountAmount > 0 || redemptionDiscount > 0) && (
                   <span className="text-xs text-muted-foreground line-through block">Rp {(total || 0).toLocaleString('id-ID')}</span>
                 )}
-                <span className="text-xl font-extrabold text-foreground">Rp {(discountedTotal || 0).toLocaleString('id-ID')}</span>
+                <span className="text-xl font-extrabold text-foreground">Rp {(finalPayable || 0).toLocaleString('id-ID')}</span>
               </div>
             </div>
+            {/* Customer points balance */}
+            {loyaltyEnabled && selectedCustomerObj && (
+              <div className="flex items-center justify-between pt-1 text-xs">
+                <span className="flex items-center gap-1 text-muted-foreground">
+                  <Star className="w-3 h-3 text-warning" />
+                  {selectedCustomerObj.name}: {customerPoints} poin
+                </span>
+                {pointsEarned > 0 && (
+                  <span className="text-success font-semibold">+{pointsEarned} poin</span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Discount Selector */}
           {activeDiscounts.length > 0 && (
             <div className="px-5 py-0 shrink-0">
               {selectedDiscount ? (
-                <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
-                  <Tag className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div className="flex items-center gap-2 bg-success/10 border border-success/30 rounded-lg px-3 py-2">
+                  <Tag className="w-4 h-4 text-success shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-emerald-700 truncate">{selectedDiscount.name}</p>
-                    <p className="text-xs text-emerald-600/80">
+                    <p className="text-sm font-semibold text-success truncate">{selectedDiscount.name}</p>
+                    <p className="text-xs text-success/80">
                       {selectedDiscount.type === 'percentage'
                         ? `Diskon ${selectedDiscount.value}%`
                         : `Potongan Rp ${(selectedDiscount.value || 0).toLocaleString('id-ID')}`}
@@ -1074,8 +1342,9 @@ export function POSModule() {
                   </div>
                   <button
                     type="button"
-                    className="shrink-0 p-1 rounded-md hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
+                    className="shrink-0 p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
                     onClick={() => setSelectedDiscount(null)}
+                    aria-label="Hapus diskon"
                     title="Hapus diskon"
                   >
                     <X className="w-4 h-4" />
@@ -1087,7 +1356,7 @@ export function POSModule() {
                     <button
                       key={d.id}
                       type="button"
-                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 hover:border-amber-500/40 text-amber-700 dark:text-amber-400 text-xs font-semibold transition-colors"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-warning/10 border border-warning/20 hover:bg-warning/20 hover:border-warning/40 text-warning text-xs font-semibold transition-colors"
                       onClick={() => setSelectedDiscount(d)}
                       title={`${d.type === 'percentage' ? `${d.value}%` : `Rp ${d.value}`} — ${d.description || ''}`}
                     >
@@ -1103,8 +1372,9 @@ export function POSModule() {
             </div>
           )}
 
+          {/* Issue #15: increased height and applied persistent warning styling to improve visual hierarchy */}
           <button
-            className="w-full flex items-center justify-center gap-2 h-10 rounded-xl bg-card hover:bg-amber-500/10 border border-border hover:border-amber-500/50 text-foreground/75 hover:text-amber-600 text-xs font-semibold transition-colors disabled:opacity-40 disabled:pointer-events-none"
+            className="w-full flex items-center justify-center gap-2 h-12 rounded-xl bg-warning/10 border border-warning/40 text-warning text-xs font-semibold transition-colors hover:bg-warning/20 hover:border-warning/60 disabled:opacity-40 disabled:pointer-events-none"
             disabled={cart.length === 0}
             onClick={() => { setHoldLabel(''); setIsHoldDialogOpen(true); }}
             title="Tahan pesanan untuk dibayar nanti"
@@ -1115,7 +1385,7 @@ export function POSModule() {
 
           <div className="grid grid-cols-3 gap-2">
             <button
-              className="flex flex-col items-center justify-center gap-1 h-14 rounded-xl bg-primary hover:opacity-90 text-primary-foreground font-semibold transition-opacity disabled:opacity-40 disabled:pointer-events-none"
+              className="flex flex-col items-center justify-center gap-1 h-14 rounded-xl bg-warning hover:bg-warning/90 text-warning-foreground font-semibold transition-colors disabled:opacity-40 disabled:pointer-events-none"
               disabled={cart.length === 0}
               onClick={() => { setPaymentNote(''); setIsCashDialogOpen(true); }}
             >
@@ -1123,7 +1393,7 @@ export function POSModule() {
               <span className="text-[11px]">Tunai</span>
             </button>
             <button
-              className="flex flex-col items-center justify-center gap-1 h-14 rounded-xl bg-[color:var(--brand-blue)] hover:opacity-90 text-white font-semibold transition-opacity disabled:opacity-40 disabled:pointer-events-none"
+              className="flex flex-col items-center justify-center gap-1 h-14 rounded-xl bg-info hover:bg-info/90 text-info-foreground font-semibold transition-colors disabled:opacity-40 disabled:pointer-events-none"
               disabled={cart.length === 0}
               onClick={() => { setPaymentNote(''); setIsQrisDialogOpen(true); }}
             >
@@ -1131,7 +1401,7 @@ export function POSModule() {
               <span className="text-[11px]">QRIS</span>
             </button>
             <button
-              className="flex flex-col items-center justify-center gap-1 h-14 rounded-xl bg-card hover:bg-accent border border-border text-foreground font-semibold transition-colors disabled:opacity-40 disabled:pointer-events-none"
+              className="flex flex-col items-center justify-center gap-1 h-14 rounded-xl bg-brand hover:bg-brand/90 text-brand-foreground font-semibold transition-colors disabled:opacity-40 disabled:pointer-events-none"
               disabled={cart.length === 0}
               onClick={() => { setPaymentNote(''); setIsCardDialogOpen(true); }}
             >
@@ -1150,18 +1420,18 @@ export function POSModule() {
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <PauseCircle className="w-5 h-5 text-amber-500" />
+              <PauseCircle className="w-5 h-5 text-warning" />
               Tahan Pesanan (Bayar Nanti)
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-1">
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 space-y-1">
+            <div className="bg-warning/10 border border-warning/30 rounded-lg p-3 text-xs text-warning space-y-1">
               <p className="font-semibold">Ringkasan pesanan</p>
               <div className="flex justify-between"><span>Item</span><span>{cart.reduce((s, i) => s + i.quantity, 0)} pcs</span></div>
               <div className="flex justify-between font-bold"><span>Total</span><span>Rp {discountedTotal.toLocaleString('id-ID')}</span></div>
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-600">Label Pesanan <span className="text-slate-400 font-normal">(opsional)</span></label>
+              <label className="text-xs font-medium text-muted-foreground">Label Pesanan <span className="text-muted-foreground/70 font-normal">(opsional)</span></label>
               <Input
                 placeholder="Mis. Pak Budi meja 3, Bu Ani..."
                 value={holdLabel}
@@ -1170,7 +1440,7 @@ export function POSModule() {
                 autoFocus
                 maxLength={60}
               />
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[11px] text-muted-foreground">
                 Jika kosong, akan pakai Meja/Pelanggan yang terpilih sebagai label.
               </p>
             </div>
@@ -1180,7 +1450,7 @@ export function POSModule() {
             <Button
               onClick={handleHoldOrder}
               disabled={savingHold || cart.length === 0}
-              className="bg-amber-500 hover:bg-amber-600"
+              className="bg-warning hover:bg-warning/90 text-warning-foreground"
             >
               <PauseCircle className="w-4 h-4 mr-1.5" />
               {savingHold ? 'Menahan...' : 'Tahan Pesanan'}
@@ -1194,62 +1464,62 @@ export function POSModule() {
         <DialogContent className="max-w-2xl p-0 overflow-hidden">
           <DialogHeader className="px-5 pt-5 pb-3">
             <DialogTitle className="flex items-center gap-2">
-              <Clock className="w-5 h-5 text-orange-500" />
+              <Clock className="w-5 h-5 text-brand" />
               Pesanan Ditahan
-              <span className="text-sm font-normal text-slate-500">({heldOrders.length})</span>
+              <span className="text-sm font-normal text-muted-foreground">({heldOrders.length})</span>
             </DialogTitle>
           </DialogHeader>
-          <div className="max-h-[65vh] overflow-y-auto border-t border-slate-200 bg-slate-50/50">
+          <div className="max-h-[65vh] overflow-y-auto border-t border-border bg-muted/30">
             {heldOrders.length === 0 ? (
-              <div className="text-center py-16 text-slate-400">
-                <PauseCircle className="w-12 h-12 mx-auto text-slate-300 mb-3" />
-                <p className="text-sm">Belum ada pesanan yang ditahan</p>
-                <p className="text-xs mt-1">Gunakan tombol "Bayar Nanti" di panel pesanan untuk menahan transaksi.</p>
-              </div>
+              <EmptyState
+                icon={PauseCircle}
+                title="Belum ada pesanan yang ditahan"
+                description='Gunakan tombol "Bayar Nanti" di panel pesanan untuk menahan transaksi.'
+              />
             ) : (
-              <div className="divide-y divide-slate-200">
+              <div className="divide-y divide-border">
                 {heldOrders.map((h: any) => {
                   const items = h.items || [];
                   const visibleItems = items.slice(0, 3).map((i: any) => `${i.quantity}x ${i.name}`).join(', ');
                   const remaining = items.length - 3;
                   const totalQty = items.reduce((s: number, i: any) => s + (i.quantity || 0), 0);
                   return (
-                    <div key={h.id} className="flex items-start gap-3 px-5 py-4 bg-white hover:bg-amber-50/40 transition-colors">
-                      <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-600 shrink-0 flex items-center justify-center">
+                    <div key={h.id} className="flex items-start gap-3 px-5 py-4 bg-card hover:bg-warning/10 transition-colors">
+                      <div className="w-10 h-10 rounded-xl bg-warning/15 text-warning shrink-0 flex items-center justify-center">
                         <PauseCircle className="w-5 h-5" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center flex-wrap gap-2 mb-1">
-                          <span className="font-semibold text-slate-800 text-sm">
+                          <span className="font-semibold text-foreground text-sm">
                             {h.label || `Pesanan #${h.id}`}
                           </span>
                           {h.tableName && (
-                            <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium inline-flex items-center gap-1">
+                            <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium inline-flex items-center gap-1">
                               <Armchair className="w-3 h-3" />{h.tableName}
                             </span>
                           )}
                           {h.customer && (
-                            <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium inline-flex items-center gap-1">
+                            <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium inline-flex items-center gap-1">
                               <User className="w-3 h-3" />{h.customer}
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-slate-500 mb-1">
+                        <p className="text-xs text-muted-foreground mb-1">
                           {h.date ? new Date(h.date).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
                           {h.cashier && <span> • Kasir: {h.cashier}</span>}
                         </p>
-                        <p className="text-sm text-slate-600 truncate" title={items.map((i: any) => `${i.quantity}x ${i.name}`).join(', ')}>
+                        <p className="text-sm text-muted-foreground truncate" title={items.map((i: any) => `${i.quantity}x ${i.name}`).join(', ')}>
                           {visibleItems}
-                          {remaining > 0 && <span className="text-orange-500 font-medium"> +{remaining} lainnya</span>}
+                          {remaining > 0 && <span className="text-brand font-medium"> +{remaining} lainnya</span>}
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className="text-base font-bold text-slate-800 whitespace-nowrap">Rp {(h.total || 0).toLocaleString('id-ID')}</p>
-                        <p className="text-[11px] text-slate-400 mt-0.5">{totalQty} item</p>
+                        <p className="text-base font-bold text-foreground whitespace-nowrap">Rp {(h.total || 0).toLocaleString('id-ID')}</p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">{totalQty} item</p>
                         <div className="flex items-center gap-1 mt-2 justify-end">
                           <Button
                             size="sm"
-                            className="h-7 px-2 text-xs bg-emerald-500 hover:bg-emerald-600"
+                            className="h-7 px-2 text-xs bg-success hover:bg-success/90 text-success-foreground"
                             onClick={() => handleResumeHeld(h)}
                             title="Lanjutkan pesanan ini"
                           >
@@ -1261,9 +1531,10 @@ export function POSModule() {
                             size="icon"
                             className="h-7 w-7"
                             onClick={() => handleDeleteHeld(h)}
+                            aria-label="Hapus pesanan ditahan"
                             title="Hapus pesanan ditahan"
                           >
-                            <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                            <Trash2 className="w-3.5 h-3.5 text-destructive" />
                           </Button>
                         </div>
                       </div>
@@ -1281,7 +1552,7 @@ export function POSModule() {
         <DialogContent className="max-w-md p-0 gap-0 overflow-hidden">
           <DialogHeader className="px-5 pt-5 pb-3">
             <DialogTitle className="flex items-center gap-2">
-              <User className="w-5 h-5 text-orange-500" />
+              <User className="w-5 h-5 text-brand" />
               Pilih Pelanggan
             </DialogTitle>
           </DialogHeader>
@@ -1289,7 +1560,7 @@ export function POSModule() {
           {/* Search bar */}
           <div className="px-5 pb-3">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
               <Input
                 placeholder="Cari nama atau no. telepon..."
                 value={customerSearch}
@@ -1301,7 +1572,8 @@ export function POSModule() {
                 <button
                   type="button"
                   onClick={() => setCustomerSearch('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 flex items-center justify-center"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center"
+                  aria-label="Bersihkan pencarian"
                   title="Bersihkan pencarian"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -1311,7 +1583,7 @@ export function POSModule() {
           </div>
 
           {/* List */}
-          <div className="max-h-[50vh] overflow-y-auto border-t border-slate-200 bg-slate-50/50">
+          <div className="max-h-[50vh] overflow-y-auto border-t border-border bg-muted/30">
             {(() => {
               const q = customerSearch.trim().toLowerCase();
               const filtered = q
@@ -1327,16 +1599,16 @@ export function POSModule() {
                     <button
                       type="button"
                       onClick={() => { setSelectedCustomer('Walk-In Customer'); setIsCustomerPickerOpen(false); }}
-                      className={`w-full flex items-center gap-3 px-5 py-3 border-b border-slate-200 hover:bg-orange-50 transition-colors text-left ${selectedCustomer === 'Walk-In Customer' ? 'bg-orange-50' : 'bg-white'}`}
+                      className={`w-full flex items-center gap-3 px-5 py-3 border-b border-border hover:bg-brand/10 transition-colors text-left ${selectedCustomer === 'Walk-In Customer' ? 'bg-brand/10' : 'bg-card'}`}
                     >
-                      <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
-                        <User className="w-4 h-4 text-slate-500" />
+                      <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center shrink-0">
+                        <User className="w-4 h-4 text-muted-foreground" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-slate-800">Walk-In</p>
-                        <p className="text-xs text-slate-500">Pelanggan tidak teridentifikasi</p>
+                        <p className="text-sm font-semibold text-foreground">Walk-In</p>
+                        <p className="text-xs text-muted-foreground">Pelanggan tidak teridentifikasi</p>
                       </div>
-                      {selectedCustomer === 'Walk-In Customer' && <CheckCircle2 className="w-4 h-4 text-orange-500 shrink-0" />}
+                      {selectedCustomer === 'Walk-In Customer' && <CheckCircle2 className="w-4 h-4 text-brand shrink-0" />}
                     </button>
                   )}
                   {filtered.map((c: any) => {
@@ -1346,39 +1618,40 @@ export function POSModule() {
                         key={c.id}
                         type="button"
                         onClick={() => { setSelectedCustomer(c.name); setIsCustomerPickerOpen(false); }}
-                        className={`w-full flex items-center gap-3 px-5 py-3 border-b border-slate-200 hover:bg-orange-50 transition-colors text-left ${active ? 'bg-orange-50' : 'bg-white'}`}
+                        className={`w-full flex items-center gap-3 px-5 py-3 border-b border-border hover:bg-brand/10 transition-colors text-left ${active ? 'bg-brand/10' : 'bg-card'}`}
                       >
-                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-orange-400 to-amber-400 text-white flex items-center justify-center font-semibold text-sm shrink-0">
+                        <div className="w-9 h-9 rounded-full bg-brand text-brand-foreground flex items-center justify-center font-semibold text-sm shrink-0">
                           {(c.name || '?').charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-800 truncate">{c.name}</p>
+                          <p className="text-sm font-semibold text-foreground truncate">{c.name}</p>
                           {c.phone ? (
-                            <p className="text-xs text-slate-500 flex items-center gap-1">
+                            <p className="text-xs text-muted-foreground flex items-center gap-1">
                               <Phone className="w-3 h-3" />
                               {c.phone}
                             </p>
                           ) : (
-                            <p className="text-xs text-slate-400 italic">Tidak ada no. telepon</p>
+                            <p className="text-xs text-muted-foreground italic">Tidak ada no. telepon</p>
                           )}
                         </div>
                         {c.points > 0 && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold shrink-0">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/15 text-warning font-semibold shrink-0">
                             {c.points} pts
                           </span>
                         )}
-                        {active && <CheckCircle2 className="w-4 h-4 text-orange-500 shrink-0" />}
+                        {active && <CheckCircle2 className="w-4 h-4 text-brand shrink-0" />}
                       </button>
                     );
                   })}
                   {filtered.length === 0 && !showWalkIn && (
-                    <div className="text-center py-10 text-sm text-slate-400">
-                      <Search className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-                      Tidak ada pelanggan cocok dengan "{customerSearch}"
-                    </div>
+                    <EmptyState
+                      icon={Search}
+                      compact
+                      title={`Tidak ada pelanggan cocok dengan "${customerSearch}"`}
+                    />
                   )}
                   {customers.length === 0 && showWalkIn && (
-                    <div className="text-center py-6 text-xs text-slate-400 italic">
+                    <div className="text-center py-6 text-xs text-muted-foreground italic">
                       Belum ada pelanggan terdaftar
                     </div>
                   )}
@@ -1388,7 +1661,7 @@ export function POSModule() {
           </div>
 
           {/* Footer action */}
-          <div className="px-5 py-3 border-t border-slate-200 bg-white">
+          <div className="px-5 py-3 border-t border-border bg-card">
             <Button
               variant="outline"
               className="w-full"
@@ -1411,13 +1684,13 @@ export function POSModule() {
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <UserPlus className="w-5 h-5 text-orange-500" />
+              <UserPlus className="w-5 h-5 text-brand" />
               Tambah Pelanggan
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-1">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-600">Nama Pelanggan <span className="text-red-500">*</span></label>
+              <label className="text-xs font-medium text-muted-foreground">Nama Pelanggan <span className="text-destructive">*</span></label>
               <Input
                 placeholder="Mis. Budi Santoso"
                 value={quickCustomerName}
@@ -1430,7 +1703,7 @@ export function POSModule() {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-600">No. Telepon <span className="text-slate-400 font-normal">(opsional)</span></label>
+              <label className="text-xs font-medium text-muted-foreground">No. Telepon <span className="text-muted-foreground/70 font-normal">(opsional)</span></label>
               <Input
                 placeholder="Mis. 08123456789"
                 value={quickCustomerPhone}
@@ -1442,7 +1715,7 @@ export function POSModule() {
                 maxLength={20}
               />
             </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
               Pelanggan baru akan langsung terpilih pada transaksi ini. Poin loyalitas dimulai dari 0 dan bertambah otomatis setelah pembayaran.
             </p>
           </div>
@@ -1453,7 +1726,7 @@ export function POSModule() {
             <Button
               onClick={handleQuickAddCustomer}
               disabled={savingCustomer || !quickCustomerName.trim()}
-              className="bg-orange-500 hover:bg-orange-600"
+              className="bg-brand hover:bg-brand/90 text-brand-foreground"
             >
               <UserPlus className="w-4 h-4 mr-1.5" />
               {savingCustomer ? 'Menyimpan...' : 'Simpan & Pilih'}
@@ -1467,34 +1740,34 @@ export function POSModule() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <StickyNote className="w-5 h-5 text-orange-500" />
+              <StickyNote className="w-5 h-5 text-brand" />
               Catatan Item
             </DialogTitle>
           </DialogHeader>
           {noteEditingIndex !== null && cart[noteEditingIndex] && (
             <div className="space-y-3 py-2">
               <div className="text-sm">
-                <div className="font-semibold text-slate-800">{cart[noteEditingIndex].name}</div>
+                <div className="font-semibold text-foreground">{cart[noteEditingIndex].name}</div>
                 {cart[noteEditingIndex].variantName && (
-                  <div className="text-xs text-slate-500">{cart[noteEditingIndex].variantName}</div>
+                  <div className="text-xs text-muted-foreground">{cart[noteEditingIndex].variantName}</div>
                 )}
               </div>
               <textarea
-                className="w-full min-h-[80px] rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/40 focus:border-orange-500"
+                className="w-full min-h-[80px] rounded-lg border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand"
                 placeholder="Mis. Less sugar, No ice, Extra spicy, Tanpa bawang..."
                 value={noteDraft}
                 onChange={(e) => setNoteDraft(e.target.value)}
                 autoFocus
                 maxLength={200}
               />
-              <p className="text-xs text-slate-500">{noteDraft.length}/200 karakter</p>
+              <p className="text-xs text-muted-foreground">{noteDraft.length}/200 karakter</p>
             </div>
           )}
           <DialogFooter className="gap-2">
             {noteEditingIndex !== null && cart[noteEditingIndex]?.note && (
               <Button
                 variant="ghost"
-                className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                className="text-destructive hover:text-destructive hover:bg-destructive/10"
                 onClick={() => {
                   setCart(prev => prev.map((it, i) => i === noteEditingIndex ? { ...it, note: undefined } : it));
                   setNoteEditingIndex(null);
@@ -1505,7 +1778,7 @@ export function POSModule() {
             )}
             <Button variant="outline" onClick={() => setNoteEditingIndex(null)}>Batal</Button>
             <Button
-              className="bg-orange-500 hover:bg-orange-600"
+              className="bg-brand hover:bg-brand/90 text-brand-foreground"
               onClick={() => {
                 const trimmed = noteDraft.trim();
                 setCart(prev => prev.map((it, i) => i === noteEditingIndex ? { ...it, note: trimmed || undefined } : it));
@@ -1528,7 +1801,7 @@ export function POSModule() {
             {variantProduct?.variants?.map((v: any) => (
               <button
                 key={v.name}
-                className="h-12 rounded-xl bg-slate-100 hover:bg-orange-50 border border-slate-200 hover:border-orange-400 text-slate-800 font-semibold text-sm transition-colors"
+                className="h-12 rounded-xl bg-muted hover:bg-brand/10 border border-border hover:border-brand text-foreground font-semibold text-sm transition-colors"
                 onClick={() => { addToCart(variantProduct, v); setVariantProduct(null); }}
               >
                 {v.name} — Rp {((variantProduct?.price || 0) + (v.price || 0)).toLocaleString('id-ID')}
@@ -1545,9 +1818,25 @@ export function POSModule() {
             <DialogTitle>Pembayaran Tunai</DialogTitle>
           </DialogHeader>
           <div className="space-y-5 py-2">
+            {/* Loyalty redemption toggle */}
+            {canRedeem && (
+              <div className="flex items-center justify-between rounded-lg bg-warning/10 border border-warning/30 px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <Star className="w-4 h-4 text-warning shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-warning">Gunakan Poin</p>
+                    <p className="text-xs text-warning/80">{customerPoints} poin = Rp {(customerPoints * redeemRate).toLocaleString('id-ID')}</p>
+                  </div>
+                </div>
+                <Switch checked={useRedemption} onCheckedChange={(v: boolean) => setUseRedemption(v)} />
+              </div>
+            )}
             <div className="flex justify-between items-center text-lg">
               <span className="font-medium text-muted-foreground">Total Tagihan:</span>
-              <span className="font-bold text-foreground text-2xl">Rp {(discountedTotal || 0).toLocaleString('id-ID')}</span>
+              <div className="text-right">
+                {redemptionDiscount > 0 && <span className="text-xs text-muted-foreground line-through block">Rp {(discountedTotal || 0).toLocaleString('id-ID')}</span>}
+                <span className="font-bold text-foreground text-2xl">Rp {(finalPayable || 0).toLocaleString('id-ID')}</span>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -1557,7 +1846,7 @@ export function POSModule() {
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-7 text-xs text-red-500 hover:text-red-400"
+                  className="h-7 text-xs text-destructive hover:text-destructive/80"
                   onClick={() => setAmountPaid('')}
                   disabled={amountPaid === ''}
                 >
@@ -1585,7 +1874,7 @@ export function POSModule() {
                     key={n}
                     type="button"
                     variant="outline"
-                    className="h-11 text-sm font-semibold hover:bg-orange-500/10 hover:border-orange-500/50 hover:text-orange-600 dark:hover:text-orange-400"
+                    className="h-11 text-sm font-semibold hover:bg-brand/10 hover:border-brand/50 hover:text-brand"
                     onClick={() => setAmountPaid(prev => (typeof prev === 'number' ? prev : 0) + n)}
                   >
                     + Rp {n.toLocaleString('id-ID')}
@@ -1596,22 +1885,22 @@ export function POSModule() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-10 text-xs hover:bg-emerald-500/10 hover:border-emerald-500/50 hover:text-emerald-600 dark:hover:text-emerald-400"
-                  onClick={() => setAmountPaid(total)}
-                  disabled={!total}
+                  className="h-10 text-xs hover:bg-success/10 hover:border-success/50 hover:text-success"
+                  onClick={() => setAmountPaid(finalPayable)}
+                  disabled={!finalPayable}
                 >
-                  Uang Pas (Rp {(total || 0).toLocaleString('id-ID')})
+                  Uang Pas (Rp {(finalPayable || 0).toLocaleString('id-ID')})
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-10 text-xs hover:bg-emerald-500/10 hover:border-emerald-500/50 hover:text-emerald-600 dark:hover:text-emerald-400"
+                  className="h-10 text-xs hover:bg-success/10 hover:border-success/50 hover:text-success"
                   onClick={() => {
                     // Round up to nearest 5,000
-                    const rounded = Math.ceil(total / 5000) * 5000;
+                    const rounded = Math.ceil(finalPayable / 5000) * 5000;
                     setAmountPaid(rounded);
                   }}
-                  disabled={!total}
+                  disabled={!finalPayable}
                 >
                   Bulatkan ke 5rb
                 </Button>
@@ -1620,7 +1909,7 @@ export function POSModule() {
 
             <div className="flex justify-between items-center text-lg pt-1 border-t border-border">
               <span className="font-medium text-muted-foreground">Kembalian:</span>
-              <span className={cn("font-bold text-2xl", change < 0 ? "text-red-500" : "text-emerald-600 dark:text-emerald-400")}>
+              <span className={cn("font-bold text-2xl", change < 0 ? "text-destructive" : "text-success")}>
                 Rp {(change || 0).toLocaleString('id-ID')}
               </span>
             </div>
@@ -1637,7 +1926,7 @@ export function POSModule() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsCashDialogOpen(false)}>Batal</Button>
             <Button
-              className="bg-orange-500 hover:bg-orange-600 text-white"
+              className="bg-warning hover:bg-warning/90 text-warning-foreground"
               disabled={change < 0 || amountPaid === '' || processing}
               onClick={() => handleCheckout('Tunai', Number(amountPaid), change, paymentNote)}
             >
@@ -1649,37 +1938,102 @@ export function POSModule() {
 
       {/* QRIS Payment Dialog */}
       <Dialog open={isQrisDialogOpen} onOpenChange={setIsQrisDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <QrCode className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+              <QrCode className="w-5 h-5 text-info" />
               Pembayaran QRIS
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-5 py-2">
+          <div className="space-y-4 py-2">
+            {/* Loyalty redemption toggle */}
+            {canRedeem && (
+              <div className="flex items-center justify-between rounded-lg bg-warning/10 border border-warning/30 px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <Star className="w-4 h-4 text-warning shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-warning">Gunakan Poin</p>
+                    <p className="text-xs text-warning/80">{customerPoints} poin = Rp {(customerPoints * redeemRate).toLocaleString('id-ID')}</p>
+                  </div>
+                </div>
+                <Switch checked={useRedemption} onCheckedChange={(v: boolean) => setUseRedemption(v)} />
+              </div>
+            )}
+
+            {/* Total */}
             <div className="flex justify-between items-center text-lg">
               <span className="font-medium text-muted-foreground">Total Tagihan:</span>
-              <span className="font-bold text-foreground text-2xl">Rp {(discountedTotal || 0).toLocaleString('id-ID')}</span>
+              <div className="text-right">
+                {redemptionDiscount > 0 && (
+                  <span className="text-xs text-muted-foreground line-through block">
+                    Rp {(discountedTotal || 0).toLocaleString('id-ID')}
+                  </span>
+                )}
+                <span className="font-bold text-foreground text-2xl">
+                  Rp {(finalPayable || 0).toLocaleString('id-ID')}
+                </span>
+              </div>
             </div>
-            <div className="rounded-md bg-blue-500/10 border border-blue-500/30 p-3 text-sm text-blue-700 dark:text-blue-300">
+
+            {/* QR display: mode-aware — dynamic generates QR with amount; static shows uploaded image */}
+            {settings.qrisEnabled && (settings.qrisMode || 'static') === 'dynamic' && settings.qrisStatic ? (
+              // ── Dynamic mode ────────────────────────────────────────────────
+              <div className="flex flex-col items-center gap-2">
+                <div className="bg-white rounded-2xl p-3 shadow ring-1 ring-border">
+                  {dynamicQrisString ? (
+                    <QRCodeDisplay value={dynamicQrisString} size={220} />
+                  ) : (
+                    <div className="w-[220px] h-[220px] flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                      <QrCode className="w-12 h-12 opacity-30 animate-pulse" />
+                      <span className="text-xs">Membuat QR Code...</span>
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground text-center">
+                  QR Code dengan nominal <strong>Rp {(finalPayable || 0).toLocaleString('id-ID')}</strong>.<br />
+                  Scan menggunakan aplikasi e-wallet / mobile banking.
+                </p>
+              </div>
+            ) : settings.qrisEnabled && settings.qrisImage ? (
+              // ── Static mode — show the original uploaded image ───────────────
+              <div className="flex flex-col items-center gap-2">
+                <div className="bg-white rounded-2xl p-3 shadow ring-1 ring-border">
+                  <img
+                    src={settings.qrisImage}
+                    alt="QRIS"
+                    className="w-[220px] h-[220px] object-contain"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground text-center">
+                  QRIS statis — pelanggan scan lalu input nominal secara manual.
+                </p>
+              </div>
+            ) : null}
+
+            {/* Info banner */}
+            <div className="rounded-md bg-info/10 border border-info/30 p-3 text-sm text-info">
               Pastikan pelanggan sudah menyelesaikan pembayaran QRIS sebelum mengkonfirmasi.
             </div>
+
+            {/* Reference note */}
             <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground/80">Catatan / No. Referensi QRIS (opsional)</label>
+              <label className="text-sm font-medium text-foreground/80">
+                Catatan / No. Referensi QRIS (opsional)
+              </label>
               <Input
                 placeholder="Mis. No. transaksi QRIS, ID pembayaran..."
                 value={paymentNote}
                 onChange={(e) => setPaymentNote(e.target.value)}
-                autoFocus
+                autoFocus={!(settings.qrisEnabled && (settings.qrisImage || settings.qrisStatic))}
               />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsQrisDialogOpen(false)}>Batal</Button>
             <Button
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-info hover:bg-info/90 text-info-foreground"
               disabled={processing}
-              onClick={() => handleCheckout('QRIS', discountedTotal, 0, paymentNote)}
+              onClick={() => handleCheckout('QRIS', finalPayable, 0, paymentNote)}
             >
               {processing ? 'Memproses...' : 'Konfirmasi Pembayaran QRIS'}
             </Button>
@@ -1692,16 +2046,31 @@ export function POSModule() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CreditCard className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+              <CreditCard className="w-5 h-5 text-brand" />
               Pembayaran Kartu
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-5 py-2">
+            {canRedeem && (
+              <div className="flex items-center justify-between rounded-lg bg-warning/10 border border-warning/30 px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <Star className="w-4 h-4 text-warning shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-warning">Gunakan Poin</p>
+                    <p className="text-xs text-warning/80">{customerPoints} poin = Rp {(customerPoints * redeemRate).toLocaleString('id-ID')}</p>
+                  </div>
+                </div>
+                <Switch checked={useRedemption} onCheckedChange={(v: boolean) => setUseRedemption(v)} />
+              </div>
+            )}
             <div className="flex justify-between items-center text-lg">
               <span className="font-medium text-muted-foreground">Total Tagihan:</span>
-              <span className="font-bold text-foreground text-2xl">Rp {(discountedTotal || 0).toLocaleString('id-ID')}</span>
+              <div className="text-right">
+                {redemptionDiscount > 0 && <span className="text-xs text-muted-foreground line-through block">Rp {(discountedTotal || 0).toLocaleString('id-ID')}</span>}
+                <span className="font-bold text-foreground text-2xl">Rp {(finalPayable || 0).toLocaleString('id-ID')}</span>
+              </div>
             </div>
-            <div className="rounded-md bg-indigo-500/10 border border-indigo-500/30 p-3 text-sm text-indigo-700 dark:text-indigo-300">
+            <div className="rounded-md bg-brand/10 border border-brand/30 p-3 text-sm text-brand">
               Pastikan transaksi kartu (debit/kredit) berhasil di mesin EDC sebelum mengkonfirmasi.
             </div>
             <div className="space-y-2">
@@ -1717,9 +2086,9 @@ export function POSModule() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsCardDialogOpen(false)}>Batal</Button>
             <Button
-              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              className="bg-brand hover:bg-brand/90 text-brand-foreground"
               disabled={processing}
-              onClick={() => handleCheckout('Kartu', discountedTotal, 0, paymentNote)}
+              onClick={() => handleCheckout('Kartu', finalPayable, 0, paymentNote)}
             >
               {processing ? 'Memproses...' : 'Konfirmasi Pembayaran Kartu'}
             </Button>
@@ -1732,24 +2101,24 @@ export function POSModule() {
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-orange-500" />
+              <BookOpen className="w-5 h-5 text-brand" />
               Menampilkan Menu
             </DialogTitle>
           </DialogHeader>
           <div className="py-4 flex flex-col items-center gap-3">
-            <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center">
-              <Monitor className="w-8 h-8 text-orange-500" />
+            <div className="w-16 h-16 rounded-full bg-brand/15 flex items-center justify-center">
+              <Monitor className="w-8 h-8 text-brand" />
             </div>
-            <p className="text-sm text-slate-600 text-center">
+            <p className="text-sm text-muted-foreground text-center">
               Menu produk sedang ditampilkan di layar pelanggan.
             </p>
-            <p className="text-xs text-slate-400 text-center">
+            <p className="text-xs text-muted-foreground text-center">
               Tutup dialog ini untuk kembali ke tampilan pesanan.
             </p>
           </div>
           <DialogFooter>
             <Button
-              className="w-full bg-orange-500 hover:bg-orange-600"
+              className="w-full bg-brand hover:bg-brand/90 text-brand-foreground"
               onClick={() => setIsShowMenuOpen(false)}
             >
               Tutup Menu
@@ -1761,11 +2130,11 @@ export function POSModule() {
       {/* Success Overlay */}
       {successOverlay?.show && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none">
-          <div className="bg-emerald-600 text-white rounded-2xl shadow-2xl px-10 py-8 flex flex-col items-center gap-3 animate-[successPop_0.4s_ease-out]">
+          <div className="bg-success text-success-foreground rounded-2xl shadow-2xl px-10 py-8 flex flex-col items-center gap-3 animate-[successPop_0.4s_ease-out]">
             <CheckCircle2 className="w-16 h-16 drop-shadow-lg" strokeWidth={2} />
             <div className="text-2xl font-bold tracking-tight">Transaksi Berhasil!</div>
             {successOverlay.txId && (
-              <div className="text-emerald-100 text-sm">Struk #{successOverlay.txId}</div>
+              <div className="text-success-foreground/80 text-sm">Struk #{successOverlay.txId}</div>
             )}
             {successOverlay.total != null && (
               <div className="text-3xl font-extrabold mt-1">
@@ -1783,6 +2152,26 @@ export function POSModule() {
         </div>
       )}
 
+      {/* Issue #2: ConfirmDialog replacements for window.confirm() */}
+      <ConfirmDialog
+        open={!!pendingResumeHeld}
+        onOpenChange={(open) => !open && setPendingResumeHeld(null)}
+        title="Ganti Keranjang?"
+        description="Keranjang saat ini berisi item lain. Melanjutkan pesanan ditahan akan mengganti keranjang. Lanjutkan?"
+        confirmLabel="Ya, Lanjutkan"
+        variant="destructive"
+        onConfirm={() => pendingResumeHeld && doResumeHeld(pendingResumeHeld)}
+      />
+      <ConfirmDialog
+        open={!!pendingDeleteHeld}
+        onOpenChange={(open) => !open && setPendingDeleteHeld(null)}
+        title="Hapus Pesanan Ditahan?"
+        description={pendingDeleteHeld ? `Hapus pesanan "${pendingDeleteHeld.label || pendingDeleteHeld.id}"? Tindakan ini tidak bisa dibatalkan.` : ''}
+        confirmLabel="Hapus"
+        variant="destructive"
+        onConfirm={() => pendingDeleteHeld && doDeleteHeld(pendingDeleteHeld)}
+      />
+
       {/* Virtual Keyboard */}
       {!!settings.virtualKeyboard && (
         <VirtualKeyboard
@@ -1791,6 +2180,7 @@ export function POSModule() {
           onDismiss={() => setFocusedInput(null)}
           onKeyPress={(key) => {
             if (focusedInput === 'search') {
+              setSearchInput(prev => prev + key);
               setSearchQuery(prev => prev + key);
             } else if (focusedInput === 'amount') {
               setAmountPaid(prev => {
@@ -1801,6 +2191,7 @@ export function POSModule() {
           }}
           onBackspace={() => {
             if (focusedInput === 'search') {
+              setSearchInput(prev => prev.slice(0, -1));
               setSearchQuery(prev => prev.slice(0, -1));
             } else if (focusedInput === 'amount') {
               setAmountPaid(prev => {
@@ -1810,7 +2201,7 @@ export function POSModule() {
             }
           }}
           onClear={() => {
-            if (focusedInput === 'search') setSearchQuery('');
+            if (focusedInput === 'search') { setSearchInput(''); setSearchQuery(''); }
             else if (focusedInput === 'amount') setAmountPaid('');
           }}
         />

@@ -85,6 +85,12 @@ pub fn restore_database(db: State<'_, AppDb>, source_path: String) -> Result<ser
         "money_flow",
         "users",
         "activity_log",
+        "discounts",
+        "held_orders",
+        "suppliers",
+        "product_batches",
+        "stock_movements",
+        "purchase_orders",
     ];
     for t in &tables {
         // Only copy if the source has the table (older backups may not)

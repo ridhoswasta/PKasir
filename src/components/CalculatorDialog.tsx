@@ -149,17 +149,17 @@ export function CalculatorDialog({ open, onOpenChange }: CalculatorDialogProps) 
       <DialogContent className="max-w-[340px] p-5">
         <DialogHeader className="pb-2">
           <DialogTitle className="flex items-center gap-2 text-base">
-            <CalcIcon className="w-5 h-5 text-orange-500" />
+            <CalcIcon className="w-5 h-5 text-brand" />
             Kalkulator
           </DialogTitle>
         </DialogHeader>
 
         {/* Display */}
-        <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-4 text-right">
-          <div className="text-xs text-slate-400 h-4 truncate">{history || '\u00A0'}</div>
-          <div className="text-3xl font-bold text-white truncate mt-1" title={display}>{display}</div>
+        <div className="bg-card rounded-2xl p-4 text-right border border-border">
+          <div className="text-xs text-muted-foreground h-4 truncate">{history || '\u00A0'}</div>
+          <div className="text-3xl font-bold text-foreground truncate mt-1" title={display}>{display}</div>
           {op && (
-            <div className="text-[11px] text-orange-400 mt-0.5 uppercase tracking-widest">
+            <div className="text-[11px] text-brand mt-0.5 uppercase tracking-widest">
               {prev !== null && `${fmt(prev)} ${op} ...`}
             </div>
           )}
@@ -167,44 +167,44 @@ export function CalculatorDialog({ open, onOpenChange }: CalculatorDialogProps) 
 
         {/* Keypad */}
         <div className="grid grid-cols-4 gap-2 mt-4">
-          <Btn onClick={reset} className="bg-rose-100 text-rose-700 hover:bg-rose-200">AC</Btn>
-          <Btn onClick={backspace} className="bg-slate-100 text-slate-700 hover:bg-slate-200">
+          <Btn onClick={reset} className="bg-destructive/10 text-destructive hover:bg-destructive/20">AC</Btn>
+          <Btn onClick={backspace} className="bg-muted text-muted-foreground hover:bg-muted/80">
             <Delete className="w-5 h-5 mx-auto" />
           </Btn>
-          <Btn onClick={percent} className="bg-slate-100 text-slate-700 hover:bg-slate-200">%</Btn>
-          <Btn onClick={() => applyOperator('÷')} className={`text-white ${op === '÷' ? 'bg-orange-600' : 'bg-orange-500 hover:bg-orange-600'}`}>÷</Btn>
+          <Btn onClick={percent} className="bg-muted text-muted-foreground hover:bg-muted/80">%</Btn>
+          <Btn onClick={() => applyOperator('÷')} className={`text-brand-foreground ${op === '÷' ? 'bg-brand/90' : 'bg-brand hover:bg-brand/90'}`}>÷</Btn>
 
-          <Btn onClick={() => inputDigit('7')} className="bg-white border border-slate-200 text-slate-800 hover:bg-slate-50">7</Btn>
-          <Btn onClick={() => inputDigit('8')} className="bg-white border border-slate-200 text-slate-800 hover:bg-slate-50">8</Btn>
-          <Btn onClick={() => inputDigit('9')} className="bg-white border border-slate-200 text-slate-800 hover:bg-slate-50">9</Btn>
-          <Btn onClick={() => applyOperator('×')} className={`text-white ${op === '×' ? 'bg-orange-600' : 'bg-orange-500 hover:bg-orange-600'}`}>×</Btn>
+          <Btn onClick={() => inputDigit('7')} className="bg-card border border-border text-foreground hover:bg-muted">7</Btn>
+          <Btn onClick={() => inputDigit('8')} className="bg-card border border-border text-foreground hover:bg-muted">8</Btn>
+          <Btn onClick={() => inputDigit('9')} className="bg-card border border-border text-foreground hover:bg-muted">9</Btn>
+          <Btn onClick={() => applyOperator('×')} className={`text-brand-foreground ${op === '×' ? 'bg-brand/90' : 'bg-brand hover:bg-brand/90'}`}>×</Btn>
 
-          <Btn onClick={() => inputDigit('4')} className="bg-white border border-slate-200 text-slate-800 hover:bg-slate-50">4</Btn>
-          <Btn onClick={() => inputDigit('5')} className="bg-white border border-slate-200 text-slate-800 hover:bg-slate-50">5</Btn>
-          <Btn onClick={() => inputDigit('6')} className="bg-white border border-slate-200 text-slate-800 hover:bg-slate-50">6</Btn>
-          <Btn onClick={() => applyOperator('-')} className={`text-white ${op === '-' ? 'bg-orange-600' : 'bg-orange-500 hover:bg-orange-600'}`}>−</Btn>
+          <Btn onClick={() => inputDigit('4')} className="bg-card border border-border text-foreground hover:bg-muted">4</Btn>
+          <Btn onClick={() => inputDigit('5')} className="bg-card border border-border text-foreground hover:bg-muted">5</Btn>
+          <Btn onClick={() => inputDigit('6')} className="bg-card border border-border text-foreground hover:bg-muted">6</Btn>
+          <Btn onClick={() => applyOperator('-')} className={`text-brand-foreground ${op === '-' ? 'bg-brand/90' : 'bg-brand hover:bg-brand/90'}`}>−</Btn>
 
-          <Btn onClick={() => inputDigit('1')} className="bg-white border border-slate-200 text-slate-800 hover:bg-slate-50">1</Btn>
-          <Btn onClick={() => inputDigit('2')} className="bg-white border border-slate-200 text-slate-800 hover:bg-slate-50">2</Btn>
-          <Btn onClick={() => inputDigit('3')} className="bg-white border border-slate-200 text-slate-800 hover:bg-slate-50">3</Btn>
-          <Btn onClick={() => applyOperator('+')} className={`text-white ${op === '+' ? 'bg-orange-600' : 'bg-orange-500 hover:bg-orange-600'}`}>+</Btn>
+          <Btn onClick={() => inputDigit('1')} className="bg-card border border-border text-foreground hover:bg-muted">1</Btn>
+          <Btn onClick={() => inputDigit('2')} className="bg-card border border-border text-foreground hover:bg-muted">2</Btn>
+          <Btn onClick={() => inputDigit('3')} className="bg-card border border-border text-foreground hover:bg-muted">3</Btn>
+          <Btn onClick={() => applyOperator('+')} className={`text-brand-foreground ${op === '+' ? 'bg-brand/90' : 'bg-brand hover:bg-brand/90'}`}>+</Btn>
 
-          <Btn onClick={toggleSign} className="bg-white border border-slate-200 text-slate-800 hover:bg-slate-50">±</Btn>
-          <Btn onClick={() => inputDigit('0')} className="bg-white border border-slate-200 text-slate-800 hover:bg-slate-50">0</Btn>
-          <Btn onClick={inputDecimal} className="bg-white border border-slate-200 text-slate-800 hover:bg-slate-50">,</Btn>
-          <Btn onClick={evaluate} className="bg-emerald-500 hover:bg-emerald-600 text-white">=</Btn>
+          <Btn onClick={toggleSign} className="bg-card border border-border text-foreground hover:bg-muted">±</Btn>
+          <Btn onClick={() => inputDigit('0')} className="bg-card border border-border text-foreground hover:bg-muted">0</Btn>
+          <Btn onClick={inputDecimal} className="bg-card border border-border text-foreground hover:bg-muted">,</Btn>
+          <Btn onClick={evaluate} className="bg-brand hover:bg-brand/90 text-brand-foreground">=</Btn>
         </div>
 
         <button
           type="button"
           onClick={copyResult}
-          className="mt-3 w-full h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium inline-flex items-center justify-center gap-2 transition-colors"
+          className="mt-3 w-full h-10 rounded-xl bg-muted hover:bg-muted/80 text-muted-foreground text-sm font-medium inline-flex items-center justify-center gap-2 transition-colors"
         >
           <Copy className="w-4 h-4" />
           Salin Hasil
         </button>
 
-        <p className="text-[10px] text-slate-400 text-center mt-2">
+        <p className="text-[10px] text-muted-foreground text-center mt-2">
           Keyboard: 0-9, + − × ÷, Enter (=), Backspace, Esc (AC)
         </p>
       </DialogContent>

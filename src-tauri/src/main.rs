@@ -80,12 +80,48 @@ fn main() {
             commands::held_orders::delete_held_order,
             // CSV Export
             commands::export::export_csv,
+            // PDF Export
+            commands::export::export_pdf,
             // Discounts
             commands::discounts::get_discounts,
             commands::discounts::get_active_discounts,
             commands::discounts::create_discount,
             commands::discounts::update_discount,
             commands::discounts::delete_discount,
+            // Email alerts
+            commands::email::send_email,
+            // Suppliers
+            commands::suppliers::get_suppliers,
+            commands::suppliers::create_supplier,
+            commands::suppliers::update_supplier,
+            commands::suppliers::delete_supplier,
+            // Inventory: batches, stock movements, adjustments
+            commands::inventory::get_batches,
+            commands::inventory::create_batch,
+            commands::inventory::update_batch,
+            commands::inventory::delete_batch,
+            commands::inventory::get_expiring_batches,
+            commands::inventory::get_stock_movements,
+            commands::inventory::adjust_stock,
+            // Purchase Orders
+            commands::purchase_orders::get_purchase_orders,
+            commands::purchase_orders::create_purchase_order,
+            commands::purchase_orders::update_purchase_order,
+            commands::purchase_orders::delete_purchase_order,
+            commands::purchase_orders::receive_purchase_order,
+            // Ingredients & Recipes (costing)
+            commands::ingredients::get_ingredients,
+            commands::ingredients::create_ingredient,
+            commands::ingredients::update_ingredient,
+            commands::ingredients::delete_ingredient,
+            commands::ingredients::get_recipe,
+            commands::ingredients::save_recipe,
+            commands::ingredients::get_product_cost,
+            commands::ingredients::get_all_product_costs,
+            commands::ingredients::deduct_ingredients_for_sale,
+            // QRIS Dynamic Generator
+            commands::qris::generate_dynamic_qris,
+            commands::qris::validate_static_qris,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

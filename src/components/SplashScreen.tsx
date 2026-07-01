@@ -13,10 +13,10 @@ export function SplashScreen({ onDone, duration = 1800 }: { onDone: () => void; 
   return (
     <div
       className={`absolute inset-0 z-[9999] flex flex-col items-center justify-center
-        bg-gradient-to-br from-orange-500 via-orange-400 to-amber-300
+        bg-gradient-to-br from-brand via-brand/90 to-warning
         transition-opacity duration-500 ${hiding ? 'opacity-0' : 'opacity-100'}`}
     >
-      <div className="flex flex-col items-center text-white">
+      <div className="flex flex-col items-center text-brand-foreground">
         <div className="relative">
           <div className="absolute inset-0 blur-2xl bg-white/40 rounded-full animate-pulse" />
           <div className="relative bg-white/15 backdrop-blur-md rounded-3xl p-7 shadow-2xl ring-1 ring-white/30">

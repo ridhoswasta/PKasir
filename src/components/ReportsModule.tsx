@@ -4,12 +4,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { StatCard } from '@/components/ui/stat-card';
+import { EmptyState } from '@/components/ui/empty-state';
 import { ComposedChart, Area, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, LineChart, Line } from 'recharts';
-import { TrendingUp, TrendingDown, DollarSign, ShoppingCart, Package, CreditCard, ArrowUpRight, ArrowDownRight, Calendar, Filter, Users, UserCircle, Layers, Archive, Award, AlertTriangle, Zap, Boxes, Percent, Tag } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, ShoppingCart, Package, Users, UserCircle, Layers, Archive, Award, AlertTriangle, Zap, Boxes, Percent, Tag, BarChart3, PieChart as PieChartIcon, FileDown } from 'lucide-react';
+import { toast } from 'sonner';
 import { format, subDays, startOfDay, endOfDay, isWithinInterval } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 
-const PALETTE = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+const PALETTE = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--info)', 'var(--success)', 'var(--brand)'];
 
 const fmt = (n: number) => 'Rp ' + (n || 0).toLocaleString('id-ID');
 
@@ -24,12 +27,18 @@ export function ReportsModule() {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
+  const [settings, setSettings] = useState<any>({});
+  const [exportingPDF, setExportingPDF] = useState(false);
+  // Ingredient cost per product (recipe). Effective HPP = costPrice + this.
+  const [recipeCosts, setRecipeCosts] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    invoke('get_transactions').then(setTransactions).catch(() => {});
-    invoke('get_money_flow').then(setMoneyFlow).catch(() => {});
-    invoke('get_products').then(setProducts).catch(() => {});
-    invoke('get_customers').then(setCustomers).catch(() => {});
+    invoke<any[]>('get_transactions').then(setTransactions).catch(() => {});
+    invoke<any[]>('get_money_flow').then(setMoneyFlow).catch(() => {});
+    invoke<any[]>('get_products').then(setProducts).catch(() => {});
+    invoke<any[]>('get_customers').then(setCustomers).catch(() => {});
+    invoke<any>('get_settings').then(setSettings).catch(() => {});
+    invoke<Record<string, number>>('get_all_product_costs').then(setRecipeCosts).catch(() => {});
   }, []);
 
   // Filter by date range
@@ -158,14 +167,14 @@ export function ReportsModule() {
         if (!acc[cat]) acc[cat] = { name: cat, qty: 0, revenue: 0, products: new Set(), cogs: 0 };
         acc[cat].qty += it.quantity;
         acc[cat].revenue += (it.price || 0) * it.quantity;
-        acc[cat].cogs += (product?.costPrice || 0) * it.quantity;
+        acc[cat].cogs += ((product?.costPrice || 0) + (product ? recipeCosts[product.id] || 0 : 0)) * it.quantity;
         acc[cat].products.add(it.name);
       });
     });
     return Object.values(acc)
       .map(c => ({ ...c, productCount: c.products.size, profit: c.revenue - c.cogs, margin: c.revenue > 0 ? ((c.revenue - c.cogs) / c.revenue) * 100 : 0 }))
       .sort((a, b) => b.revenue - a.revenue);
-  }, [filtered, productLookup]);
+  }, [filtered, productLookup, recipeCosts]);
   const totalCategoryRevenue = categoryBreakdown.reduce((s, c) => s + c.revenue, 0);
 
   // ─── Cashier performance ───
@@ -265,16 +274,16 @@ export function ReportsModule() {
         name: p.name,
         category: p.category || 'Lain-lain',
         stock,
-        costPrice: p.costPrice || 0,
+        costPrice: (p.costPrice || 0) + (recipeCosts[p.id] || 0),
         price: p.price || 0,
         soldQty,
         dailyRate,
         daysUntilOut,
-        stockValue: (p.costPrice || 0) * stock,
+        stockValue: ((p.costPrice || 0) + (recipeCosts[p.id] || 0)) * stock,
         retailValue: (p.price || 0) * stock,
       };
     });
-  }, [products, filtered, daysInRange]);
+  }, [products, filtered, daysInRange, recipeCosts]);
 
   const totalStockValue = stockBreakdown.reduce((s, p) => s + p.stockValue, 0);
   const totalRetailValue = stockBreakdown.reduce((s, p) => s + p.retailValue, 0);
@@ -285,6 +294,42 @@ export function ReportsModule() {
     .sort((a, b) => (a.daysUntilOut as number) - (b.daysUntilOut as number));
   const slowMovers = stockBreakdown.filter(p => p.stock > 0 && p.soldQty === 0);
   const fastMovers = [...stockBreakdown].filter(p => p.soldQty > 0).sort((a, b) => b.soldQty - a.soldQty).slice(0, 10);
+
+  const handleExportPDF = async () => {
+    setExportingPDF(true);
+    try {
+      // Lazy-loaded: the PDF stack (jsPDF + html2canvas + canvg) is heavy and only
+      // pulled in when the user actually exports, keeping the initial load light.
+      const { exportReportPDF } = await import('../services/pdfExport');
+      const storeName = (settings.shopName || settings.receiptHeader || 'PKasir').split('\n')[0].trim();
+      const result = await exportReportPDF({
+        storeName,
+        logo: settings.logo,
+        range,
+        customFrom,
+        customTo,
+        totalSales,
+        totalTx,
+        avgTx,
+        totalDiscount,
+        grossProfit,
+        margin,
+        topProducts: topProducts as any[],
+        transactions: filtered,
+      });
+      if (!result.saved) {
+        toast.info('Ekspor PDF dibatalkan');
+      } else if (result.path) {
+        toast.success(`PDF disimpan ke ${result.path}`);
+      } else {
+        toast.success('PDF berhasil diekspor');
+      }
+    } catch (e: any) {
+      toast.error('Gagal ekspor PDF: ' + (e?.message || e));
+    } finally {
+      setExportingPDF(false);
+    }
+  };
 
   const tabs = [
     { id: 'overview', label: 'Ringkasan' },
@@ -338,6 +383,17 @@ export function ReportsModule() {
               <Input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className="h-8 text-xs w-32" />
             </div>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportPDF}
+            disabled={exportingPDF || filtered.length === 0}
+            className="h-8 gap-1.5 text-xs font-semibold"
+            title="Export laporan ke PDF"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            {exportingPDF ? 'Mengekspor...' : 'Export PDF'}
+          </Button>
         </div>
       </div>
 
@@ -349,7 +405,7 @@ export function ReportsModule() {
             onClick={() => setActiveTab(t.id)}
             className={`flex-1 min-w-[100px] px-3 py-2.5 text-sm font-medium rounded-lg transition-all ${
               activeTab === t.id
-                ? 'bg-gradient-to-r from-indigo-500 to-violet-500 text-white shadow-md shadow-indigo-500/20'
+                ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20'
                 : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
             }`}
           >
@@ -385,28 +441,28 @@ export function ReportsModule() {
                 <ComposedChart data={dailyChart} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
                   <defs>
                     <linearGradient id="omsetGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                      <stop offset="5%" stopColor="var(--chart-1)" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="var(--chart-1)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(148 163 184 / 0.25)" />
-                  <XAxis dataKey="date" tickFormatter={d => format(new Date(d), 'dd MMM', { locale: idLocale })} tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                  <YAxis yAxisId="left" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
-                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                  <XAxis dataKey="date" tickFormatter={d => format(new Date(d), 'dd MMM', { locale: idLocale })} tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} />
                   <Tooltip
                     contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 13 }}
                     labelFormatter={l => format(new Date(l), 'EEEE, dd MMMM yyyy', { locale: idLocale })}
-                    formatter={(v: any, n: string) => {
+                    formatter={(v: any, n: any) => {
                       if (n === 'omset') return [fmt(v), 'Omset'];
                       if (n === 'diskon') return [fmt(v), 'Diskon'];
                       return [v, n];
                     }}
                   />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Area yAxisId="left" type="monotone" dataKey="omset" name="Omset" fill="url(#omsetGrad)" stroke="#6366f1" strokeWidth={2.5} dot={false} />
-                  <Bar yAxisId="right" dataKey="count" name="Transaksi" fill="#c7d2fe" radius={[4, 4, 0, 0]} barSize={16} />
+                  <Area yAxisId="left" type="monotone" dataKey="omset" name="Omset" fill="url(#omsetGrad)" stroke="var(--chart-1)" strokeWidth={2.5} dot={false} />
+                  <Bar yAxisId="right" dataKey="count" name="Transaksi" fill="var(--chart-2)" radius={[4, 4, 0, 0]} barSize={16} />
                   {totalDiscount > 0 && (
-                    <Bar yAxisId="left" dataKey="diskon" name="Diskon" fill="#fca5a5" radius={[2, 2, 0, 0]} barSize={10} />
+                    <Bar yAxisId="left" dataKey="diskon" name="Diskon" fill="var(--destructive)" radius={[2, 2, 0, 0]} barSize={10} />
                   )}
                 </ComposedChart>
               </ResponsiveContainer>
@@ -423,8 +479,8 @@ export function ReportsModule() {
                     const maxRev = (topProducts[0] as any)?.revenue || 1;
                     return (
                       <div key={p.name} className="flex items-center gap-3">
-                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white ${
-                          i === 0 ? 'bg-amber-500' : i === 1 ? 'bg-slate-400' : i === 2 ? 'bg-orange-400' : 'bg-slate-300'
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
+                          i === 0 ? 'bg-warning text-warning-foreground' : i === 1 ? 'bg-muted text-muted-foreground' : i === 2 ? 'bg-brand text-brand-foreground' : 'bg-muted text-muted-foreground'
                         }`}>{i + 1}</div>
                         <div className="flex-1 min-w-0">
                           <div className="flex justify-between items-baseline mb-1">
@@ -432,7 +488,7 @@ export function ReportsModule() {
                             <span className="text-xs text-muted-foreground ml-2 shrink-0">{p.qty} terjual</span>
                           </div>
                           <div className="h-2 bg-muted rounded-full overflow-hidden">
-                            <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all" style={{ width: `${(p.revenue / maxRev) * 100}%` }} />
+                            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${(p.revenue / maxRev) * 100}%` }} />
                           </div>
                         </div>
                         <span className="text-sm font-semibold text-foreground/80 w-28 text-right">{fmt(p.revenue)}</span>
@@ -449,9 +505,9 @@ export function ReportsModule() {
               <CardContent className="h-[260px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={hourly.filter(h => h.count > 0)} margin={{ top: 5, right: 5, bottom: 0, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(148 163 184 / 0.25)" />
-                    <XAxis dataKey="hour" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                    <XAxis dataKey="hour" tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} />
                     <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 12 }}
                       formatter={(v: any) => [v, 'Transaksi']} />
                     <Bar dataKey="count" name="Transaksi" radius={[6, 6, 0, 0]} barSize={14}>
@@ -477,20 +533,20 @@ export function ReportsModule() {
                 <ComposedChart data={dailyChart} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
                   <defs>
                     <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                      <stop offset="5%" stopColor="var(--success)" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="var(--success)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(148 163 184 / 0.25)" />
-                  <XAxis dataKey="date" tickFormatter={d => format(new Date(d), 'dd MMM', { locale: idLocale })} tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                  <YAxis yAxisId="left" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
-                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                  <XAxis dataKey="date" tickFormatter={d => format(new Date(d), 'dd MMM', { locale: idLocale })} tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} />
                   <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 13 }}
                     labelFormatter={l => format(new Date(l), 'dd MMMM yyyy', { locale: idLocale })}
-                    formatter={(v: any, n: string) => [n === 'omset' ? fmt(v) : v, n === 'omset' ? 'Omset' : 'Transaksi']} />
+                    formatter={(v: any, n: any) => [n === 'omset' ? fmt(v) : v, n === 'omset' ? 'Omset' : 'Transaksi']} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Area yAxisId="left" type="monotone" dataKey="omset" name="Omset" fill="url(#salesGrad)" stroke="#10b981" strokeWidth={2.5} dot={false} />
-                  <Bar yAxisId="right" dataKey="count" name="Transaksi" fill="#a7f3d0" radius={[4, 4, 0, 0]} barSize={14} />
+                  <Area yAxisId="left" type="monotone" dataKey="omset" name="Omset" fill="url(#salesGrad)" stroke="var(--success)" strokeWidth={2.5} dot={false} />
+                  <Bar yAxisId="right" dataKey="count" name="Transaksi" fill="var(--success)" radius={[4, 4, 0, 0]} barSize={14} />
                 </ComposedChart>
               </ResponsiveContainer>
             </CardContent>
@@ -508,17 +564,17 @@ export function ReportsModule() {
                 </TableHeader>
                 <TableBody>
                   {dailyChart.map((d: any) => (
-                    <TableRow key={d.date} className="hover:bg-indigo-50/50">
+                    <TableRow key={d.date} className="hover:bg-muted/50">
                       <TableCell className="font-medium">{format(new Date(d.date), 'EEEE, dd MMM yyyy', { locale: idLocale })}</TableCell>
-                      <TableCell className="text-center"><span className="inline-flex items-center justify-center bg-indigo-100 text-indigo-700 text-xs font-bold w-8 h-6 rounded-md">{d.count}</span></TableCell>
+                      <TableCell className="text-center"><span className="inline-flex items-center justify-center bg-info/12 text-info text-xs font-bold w-8 h-6 rounded-md">{d.count}</span></TableCell>
                       <TableCell className="text-right font-semibold">{fmt(d.omset)}</TableCell>
                     </TableRow>
                   ))}
                   {dailyChart.length > 0 && (
-                    <TableRow className="bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-600 hover:to-violet-600">
-                      <TableCell className="font-bold text-white">Total</TableCell>
-                      <TableCell className="text-center font-bold text-white">{totalTx}</TableCell>
-                      <TableCell className="text-right font-bold text-white">{fmt(totalSales)}</TableCell>
+                    <TableRow className="bg-primary hover:bg-primary">
+                      <TableCell className="font-bold text-primary-foreground">Total</TableCell>
+                      <TableCell className="text-center font-bold text-primary-foreground">{totalTx}</TableCell>
+                      <TableCell className="text-right font-bold text-primary-foreground">{fmt(totalSales)}</TableCell>
                     </TableRow>
                   )}
                   {dailyChart.length === 0 && (
@@ -540,9 +596,9 @@ export function ReportsModule() {
               <CardContent className="h-[360px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={topProducts.slice(0, 10)} layout="vertical" margin={{ top: 5, right: 10, bottom: 5, left: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgb(148 163 184 / 0.25)" />
-                    <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
-                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#475569' }} width={100} axisLine={false} tickLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--border)" />
+                    <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} width={100} axisLine={false} tickLine={false} />
                     <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 12 }}
                       formatter={(v: any) => [fmt(v), 'Pendapatan']} />
                     <Bar dataKey="revenue" name="Pendapatan" radius={[0, 6, 6, 0]} barSize={18}>
@@ -558,9 +614,9 @@ export function ReportsModule() {
               <CardContent className="h-[360px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={[...topProducts].sort((a: any, b: any) => b.qty - a.qty).slice(0, 10)} layout="vertical" margin={{ top: 5, right: 10, bottom: 5, left: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgb(148 163 184 / 0.25)" />
-                    <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#475569' }} width={100} axisLine={false} tickLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--border)" />
+                    <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} width={100} axisLine={false} tickLine={false} />
                     <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 12 }}
                       formatter={(v: any) => [v, 'Terjual']} />
                     <Bar dataKey="qty" name="Terjual" radius={[0, 6, 6, 0]} barSize={18}>
@@ -585,7 +641,7 @@ export function ReportsModule() {
                 </TableHeader>
                 <TableBody>
                   {topProducts.map((p: any, i) => (
-                    <TableRow key={p.name} className="hover:bg-violet-50/50">
+                    <TableRow key={p.name} className="hover:bg-muted/50">
                       <TableCell className="text-muted-foreground/70 font-medium">{i + 1}</TableCell>
                       <TableCell className="font-medium">{p.name}</TableCell>
                       <TableCell className="text-center">{p.qty}</TableCell>
@@ -612,7 +668,7 @@ export function ReportsModule() {
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={paymentData} cx="50%" cy="50%" innerRadius={65} outerRadius={110} paddingAngle={4} dataKey="value" cornerRadius={6}
-                      label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}>
+                      label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={{ stroke: 'var(--muted-foreground)', strokeWidth: 1 }}>
                       {paymentData.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
                     </Pie>
                     <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 13 }}
@@ -676,7 +732,7 @@ export function ReportsModule() {
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie data={discountBreakdown} cx="50%" cy="50%" innerRadius={65} outerRadius={110} paddingAngle={4} dataKey="totalDiscount" cornerRadius={6}
-                        label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}>
+                        label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={{ stroke: 'var(--muted-foreground)', strokeWidth: 1 }}>
                         {discountBreakdown.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
                       </Pie>
                       <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 13 }}
@@ -684,7 +740,9 @@ export function ReportsModule() {
                     </PieChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div className="h-full flex items-center justify-center text-muted-foreground/70 text-sm">Belum ada diskon pada periode ini</div>
+                  <div className="h-full flex items-center justify-center">
+                    <EmptyState compact icon={PieChartIcon} title="Belum ada diskon" description="Belum ada diskon pada periode ini" />
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -695,9 +753,9 @@ export function ReportsModule() {
                 {discountBreakdown.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={discountBreakdown} layout="vertical" margin={{ top: 5, right: 10, bottom: 5, left: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgb(148 163 184 / 0.25)" />
-                      <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
-                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#475569' }} width={120} axisLine={false} tickLine={false} />
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--border)" />
+                      <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} width={120} axisLine={false} tickLine={false} />
                       <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 12 }}
                         formatter={(v: any) => [v, 'Transaksi']} />
                       <Bar dataKey="txCount" name="Transaksi" radius={[0, 6, 6, 0]} barSize={18}>
@@ -706,7 +764,9 @@ export function ReportsModule() {
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div className="h-full flex items-center justify-center text-muted-foreground/70 text-sm">Belum ada diskon pada periode ini</div>
+                  <div className="h-full flex items-center justify-center">
+                    <EmptyState compact icon={BarChart3} title="Belum ada diskon" description="Belum ada diskon pada periode ini" />
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -729,18 +789,18 @@ export function ReportsModule() {
                 </TableHeader>
                 <TableBody>
                   {discountBreakdown.map((d: any, i) => (
-                    <TableRow key={d.name} className="hover:bg-rose-50/50">
+                    <TableRow key={d.name} className="hover:bg-muted/50">
                       <TableCell className="text-muted-foreground/70 font-medium">{i + 1}</TableCell>
                       <TableCell className="font-medium flex items-center gap-2">
                         <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: PALETTE[i % PALETTE.length] }} />
                         {d.name}
                       </TableCell>
                       <TableCell className="text-center">
-                        <span className="inline-flex items-center justify-center bg-rose-100 text-rose-700 text-xs font-bold w-8 h-6 rounded-md">
+                        <span className="inline-flex items-center justify-center bg-destructive/12 text-destructive text-xs font-bold w-8 h-6 rounded-md">
                           {d.txCount}
                         </span>
                       </TableCell>
-                      <TableCell className="text-right font-semibold text-rose-600">-{fmt(d.totalDiscount)}</TableCell>
+                      <TableCell className="text-right font-semibold text-destructive">-{fmt(d.totalDiscount)}</TableCell>
                       <TableCell className="text-right">{fmt(d.avgDiscount)}</TableCell>
                       <TableCell className="text-right">{fmt(d.totalRevenue)}</TableCell>
                       <TableCell className="text-right text-muted-foreground text-sm">
@@ -752,12 +812,12 @@ export function ReportsModule() {
                     </TableRow>
                   ))}
                   {discountBreakdown.length > 0 && (
-                    <TableRow className="bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-600 hover:to-red-600">
-                      <TableCell colSpan={2} className="font-bold text-white">Total</TableCell>
-                      <TableCell className="text-center font-bold text-white">{txWithDiscountCount}</TableCell>
-                      <TableCell className="text-right font-bold text-white">-{fmt(totalDiscount)}</TableCell>
-                      <TableCell className="text-right font-bold text-white">{fmt(avgDiscountPerTx)}</TableCell>
-                      <TableCell className="text-right font-bold text-white">{fmt(discountedRevenue)}</TableCell>
+                    <TableRow className="bg-destructive hover:bg-destructive">
+                      <TableCell colSpan={2} className="font-bold text-destructive-foreground">Total</TableCell>
+                      <TableCell className="text-center font-bold text-destructive-foreground">{txWithDiscountCount}</TableCell>
+                      <TableCell className="text-right font-bold text-destructive-foreground">-{fmt(totalDiscount)}</TableCell>
+                      <TableCell className="text-right font-bold text-destructive-foreground">{fmt(avgDiscountPerTx)}</TableCell>
+                      <TableCell className="text-right font-bold text-destructive-foreground">{fmt(discountedRevenue)}</TableCell>
                       <TableCell colSpan={2} />
                     </TableRow>
                   )}
@@ -791,7 +851,7 @@ export function ReportsModule() {
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie data={categoryBreakdown} cx="50%" cy="50%" innerRadius={65} outerRadius={110} paddingAngle={4} dataKey="revenue" cornerRadius={6}
-                        label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}>
+                        label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={{ stroke: 'var(--muted-foreground)', strokeWidth: 1 }}>
                         {categoryBreakdown.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
                       </Pie>
                       <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 13 }}
@@ -799,7 +859,9 @@ export function ReportsModule() {
                     </PieChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div className="h-full flex items-center justify-center text-muted-foreground/70 text-sm">Belum ada data</div>
+                  <div className="h-full flex items-center justify-center">
+                    <EmptyState compact icon={PieChartIcon} title="Belum ada data" description="Belum ada data pada periode ini" />
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -848,7 +910,7 @@ export function ReportsModule() {
                 </TableHeader>
                 <TableBody>
                   {categoryBreakdown.map((c: any, i) => (
-                    <TableRow key={c.name} className="hover:bg-indigo-50/50">
+                    <TableRow key={c.name} className="hover:bg-muted/50">
                       <TableCell className="font-medium flex items-center gap-2">
                         <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: PALETTE[i % PALETTE.length] }} />
                         {c.name}
@@ -858,7 +920,7 @@ export function ReportsModule() {
                       <TableCell className="text-right font-semibold">{fmt(c.revenue)}</TableCell>
                       <TableCell className="text-right">{fmt(c.profit)}</TableCell>
                       <TableCell className="text-right">
-                        <span className={`text-xs font-semibold px-2 py-0.5 rounded ${c.margin >= 40 ? 'bg-emerald-100 text-emerald-700' : c.margin >= 20 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded ${c.margin >= 40 ? 'bg-success/12 text-success' : c.margin >= 20 ? 'bg-warning/15 text-warning' : 'bg-destructive/12 text-destructive'}`}>
                           {c.margin.toFixed(1)}%
                         </span>
                       </TableCell>
@@ -892,15 +954,15 @@ export function ReportsModule() {
           {cashierBreakdown.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {cashierBreakdown.slice(0, 3).map((c: any, i) => {
-                const gradients = ['from-amber-400 to-yellow-300', 'from-slate-300 to-slate-200', 'from-orange-400 to-amber-300'];
+                const accents = ['bg-warning', 'bg-muted-foreground/40', 'bg-brand'];
                 const labels = ['Juara 1', 'Juara 2', 'Juara 3'];
                 return (
                   <Card key={c.name} className="border border-border shadow-sm overflow-hidden bg-card">
-                    <div className={`h-1.5 bg-gradient-to-r ${gradients[i]}`} />
+                    <div className={`h-1.5 ${accents[i]}`} />
                     <CardContent className="p-5">
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                          <Award className={`w-4 h-4 ${i === 0 ? 'text-amber-500' : i === 1 ? 'text-muted-foreground/70' : 'text-orange-400'}`} />
+                          <Award className={`w-4 h-4 ${i === 0 ? 'text-warning' : i === 1 ? 'text-muted-foreground/70' : 'text-brand'}`} />
                           {labels[i]}
                         </span>
                         <UserCircle className="w-5 h-5 text-muted-foreground/70" />
@@ -937,9 +999,9 @@ export function ReportsModule() {
               {cashierBreakdown.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={cashierBreakdown} layout="vertical" margin={{ top: 5, right: 10, bottom: 5, left: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgb(148 163 184 / 0.25)" />
-                    <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
-                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#475569' }} width={120} axisLine={false} tickLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--border)" />
+                    <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} width={120} axisLine={false} tickLine={false} />
                     <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 12 }}
                       formatter={(v: any) => [fmt(v), 'Pendapatan']} />
                     <Bar dataKey="revenue" name="Pendapatan" radius={[0, 6, 6, 0]} barSize={20}>
@@ -948,7 +1010,9 @@ export function ReportsModule() {
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-full flex items-center justify-center text-muted-foreground/70 text-sm">Belum ada data</div>
+                <div className="h-full flex items-center justify-center">
+                  <EmptyState compact icon={BarChart3} title="Belum ada data" description="Belum ada data pada periode ini" />
+                </div>
               )}
             </CardContent>
           </Card>
@@ -968,7 +1032,7 @@ export function ReportsModule() {
                 </TableHeader>
                 <TableBody>
                   {cashierBreakdown.map((c: any, i) => (
-                    <TableRow key={c.name} className="hover:bg-indigo-50/50">
+                    <TableRow key={c.name} className="hover:bg-muted/50">
                       <TableCell className="text-muted-foreground/70 font-medium">{i + 1}</TableCell>
                       <TableCell className="font-medium">{c.name}</TableCell>
                       <TableCell className="text-center">{c.txCount}</TableCell>
@@ -1009,8 +1073,8 @@ export function ReportsModule() {
                     const maxRev = (identifiedCustomers[0] as any)?.revenue || 1;
                     return (
                       <div key={c.name} className="flex items-center gap-3">
-                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white ${
-                          i === 0 ? 'bg-amber-500' : i === 1 ? 'bg-slate-400' : i === 2 ? 'bg-orange-400' : 'bg-slate-300'
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
+                          i === 0 ? 'bg-warning text-warning-foreground' : i === 1 ? 'bg-muted text-muted-foreground' : i === 2 ? 'bg-brand text-brand-foreground' : 'bg-muted text-muted-foreground'
                         }`}>{i + 1}</div>
                         <div className="flex-1 min-w-0">
                           <div className="flex justify-between items-baseline mb-1">
@@ -1018,7 +1082,7 @@ export function ReportsModule() {
                             <span className="text-xs text-muted-foreground ml-2 shrink-0">{c.txCount}× kunjungan</span>
                           </div>
                           <div className="h-2 bg-muted rounded-full overflow-hidden">
-                            <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500" style={{ width: `${(c.revenue / maxRev) * 100}%` }} />
+                            <div className="h-full rounded-full bg-info" style={{ width: `${(c.revenue / maxRev) * 100}%` }} />
                           </div>
                         </div>
                         <span className="text-sm font-semibold text-foreground/80 w-28 text-right">{fmt(c.revenue)}</span>
@@ -1035,9 +1099,9 @@ export function ReportsModule() {
               <CardContent className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={frequencyBuckets} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgb(148 163 184 / 0.25)" />
-                    <XAxis dataKey="range" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                    <XAxis dataKey="range" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} />
                     <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 12 }}
                       formatter={(v: any) => [v, 'Pelanggan']} />
                     <Bar dataKey="count" name="Pelanggan" radius={[6, 6, 0, 0]} barSize={36}>
@@ -1064,11 +1128,11 @@ export function ReportsModule() {
                 </TableHeader>
                 <TableBody>
                   {identifiedCustomers.map((c: any, i) => (
-                    <TableRow key={c.name} className="hover:bg-cyan-50/50">
+                    <TableRow key={c.name} className="hover:bg-muted/50">
                       <TableCell className="text-muted-foreground/70 font-medium">{i + 1}</TableCell>
                       <TableCell className="font-medium">{c.name}</TableCell>
                       <TableCell className="text-center">
-                        <span className={`inline-flex items-center justify-center text-xs font-bold w-8 h-6 rounded-md ${c.txCount > 1 ? 'bg-emerald-100 text-emerald-700' : 'bg-muted text-muted-foreground'}`}>
+                        <span className={`inline-flex items-center justify-center text-xs font-bold w-8 h-6 rounded-md ${c.txCount > 1 ? 'bg-success/12 text-success' : 'bg-muted text-muted-foreground'}`}>
                           {c.txCount}
                         </span>
                       </TableCell>
@@ -1102,22 +1166,22 @@ export function ReportsModule() {
           </div>
 
           {criticalStock.length > 0 && (
-            <Card className="shadow-sm bg-gradient-to-br from-rose-500/10 to-orange-500/10 border border-rose-500/30">
+            <Card className="shadow-sm bg-destructive/8 border border-destructive/30">
               <CardHeader className="pb-2">
-                <CardTitle className="text-base font-semibold text-rose-700 dark:text-rose-300 flex items-center gap-2">
+                <CardTitle className="text-base font-semibold text-destructive flex items-center gap-2">
                   <AlertTriangle className="w-5 h-5" /> Perlu Segera Restock (habis dalam ≤ 7 hari)
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                   {criticalStock.slice(0, 9).map((p: any) => (
-                    <div key={p.id} className="bg-card rounded-lg p-3 border border-rose-500/20 flex items-center justify-between">
+                    <div key={p.id} className="bg-card rounded-lg p-3 border border-destructive/20 flex items-center justify-between">
                       <div className="min-w-0">
                         <p className="font-medium text-sm truncate text-foreground">{p.name}</p>
                         <p className="text-xs text-muted-foreground">{p.category} · Stok {p.stock}</p>
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className="text-lg font-bold text-rose-600 dark:text-rose-400">{p.daysUntilOut}d</p>
+                        <p className="text-lg font-bold text-destructive">{p.daysUntilOut}d</p>
                         <p className="text-[10px] text-muted-foreground">{p.dailyRate.toFixed(1)}/hari</p>
                       </div>
                     </div>
@@ -1134,7 +1198,7 @@ export function ReportsModule() {
             <Card className="border border-border shadow-sm bg-card">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base font-semibold text-foreground/80 flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-amber-500" /> Fast Movers (Terlaris dalam Periode)
+                  <Zap className="w-4 h-4 text-warning" /> Fast Movers (Terlaris dalam Periode)
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -1147,7 +1211,7 @@ export function ReportsModule() {
                         <p className="text-xs text-muted-foreground">{p.category} · Stok {p.stock}</p>
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className="text-sm font-bold text-emerald-600">{p.soldQty} terjual</p>
+                        <p className="text-sm font-bold text-success">{p.soldQty} terjual</p>
                         <p className="text-[11px] text-muted-foreground/70">{p.dailyRate.toFixed(1)}/hari</p>
                       </div>
                     </div>
@@ -1203,7 +1267,7 @@ export function ReportsModule() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* P&L Statement */}
             <Card className="border border-border shadow-sm bg-card">
-              <CardHeader className="border-b bg-muted/50/50">
+              <CardHeader className="border-b bg-muted/50">
                 <CardTitle className="text-base font-semibold text-foreground/80">Laporan Laba Rugi</CardTitle>
               </CardHeader>
               <CardContent className="pt-5 space-y-5">
@@ -1243,7 +1307,7 @@ export function ReportsModule() {
                   empty="Tidak ada pengeluaran" />
 
                 {totalPassThrough > 0 && (
-                  <div className="flex justify-between items-center px-3 py-2.5 rounded-lg bg-muted/50 border border-slate-200 text-xs text-muted-foreground">
+                  <div className="flex justify-between items-center px-3 py-2.5 rounded-lg bg-muted/50 border border-border text-xs text-muted-foreground">
                     <span>Total Omset (Pendapatan + Pajak + Layanan)</span>
                     <span className="font-semibold text-foreground/80">{fmt(totalGrossSales)}</span>
                   </div>
@@ -1251,8 +1315,8 @@ export function ReportsModule() {
 
                 <div className={`flex justify-between items-center p-4 rounded-xl font-bold text-lg ${
                   netProfit >= 0
-                    ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white'
-                    : 'bg-gradient-to-r from-rose-500 to-red-500 text-white'
+                    ? 'bg-success text-success-foreground'
+                    : 'bg-destructive text-destructive-foreground'
                 }`}>
                   <span>Laba Bersih</span>
                   <span>{fmt(netProfit)}</span>
@@ -1268,7 +1332,7 @@ export function ReportsModule() {
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie data={expenseData} cx="50%" cy="50%" innerRadius={55} outerRadius={100} paddingAngle={4} dataKey="value" cornerRadius={6}
-                        label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}>
+                        label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={{ stroke: 'var(--muted-foreground)', strokeWidth: 1 }}>
                         {expenseData.map((_, i) => <Cell key={i} fill={PALETTE[(i + 2) % PALETTE.length]} />)}
                       </Pie>
                       <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', fontSize: 13 }}
@@ -1276,7 +1340,9 @@ export function ReportsModule() {
                     </PieChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div className="h-full flex items-center justify-center text-muted-foreground/70 text-sm">Belum ada data pengeluaran</div>
+                  <div className="h-full flex items-center justify-center">
+                    <EmptyState compact icon={PieChartIcon} title="Belum ada pengeluaran" description="Belum ada data pengeluaran pada periode ini" />
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -1289,35 +1355,25 @@ export function ReportsModule() {
 
 // ═══════ Sub-components ═══════
 
-function KPICard({ icon: Icon, label, value, color, sub, trend }: {
+function KPICard({ icon: Icon, label, value, color, sub }: {
   icon: any; label: string; value: string; color: string; sub?: string; trend?: 'up' | 'down';
 }) {
-  const colors: Record<string, string> = {
-    indigo: 'from-indigo-500 to-violet-500',
-    cyan: 'from-cyan-500 to-blue-500',
-    emerald: 'from-emerald-500 to-teal-500',
-    rose: 'from-rose-500 to-red-500',
-    slate: 'from-slate-500 to-slate-600',
-    amber: 'from-amber-500 to-orange-500',
+  const tones: Record<string, 'default' | 'success' | 'warning' | 'destructive' | 'info' | 'brand'> = {
+    indigo: 'info',
+    cyan: 'info',
+    emerald: 'success',
+    rose: 'destructive',
+    slate: 'default',
+    amber: 'warning',
   };
   return (
-    <Card className="border border-border shadow-sm overflow-hidden bg-card">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between mb-3">
-          <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${colors[color] || colors.indigo} flex items-center justify-center shadow-lg`}>
-            <Icon className="w-5 h-5 text-white" strokeWidth={2} />
-          </div>
-          {trend && (
-            <div className={`flex items-center gap-0.5 text-xs font-semibold ${trend === 'up' ? 'text-emerald-600' : 'text-rose-600'}`}>
-              {trend === 'up' ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
-            </div>
-          )}
-        </div>
-        <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">{label}</p>
-        <p className="text-xl font-extrabold text-foreground tracking-tight">{value}</p>
-        {sub && <p className="text-xs text-muted-foreground/75 mt-1">{sub}</p>}
-      </CardContent>
-    </Card>
+    <StatCard
+      icon={Icon}
+      label={label}
+      value={value}
+      sub={sub}
+      tone={tones[color] || 'info'}
+    />
   );
 }
 
@@ -1326,9 +1382,9 @@ function PLSection({ title, items, total, color, empty }: {
   color: string; empty?: string;
 }) {
   const bg: Record<string, string> = {
-    emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-    cyan: 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-300',
-    rose: 'bg-rose-500/10 text-rose-700 dark:text-rose-300',
+    emerald: 'bg-success/12 text-success',
+    cyan: 'bg-info/12 text-info',
+    rose: 'bg-destructive/12 text-destructive',
     slate: 'bg-muted text-foreground/80',
   };
   return (

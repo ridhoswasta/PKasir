@@ -4,12 +4,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Plus, Trash2, Edit, Percent, Tag } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
+import { PageHeader } from '@/components/ui/page-header';
+import { EmptyState } from '@/components/ui/empty-state';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from 'sonner';
 import { logActivity } from '../services/activity';
 
@@ -150,18 +153,19 @@ export function DiscountsModule() {
   const typeLabel = (t: string) => t === 'percentage' ? 'Persentase' : 'Nominal';
 
   return (
-    <div className="p-8 space-y-6 overflow-y-auto h-full">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-3xl font-extrabold text-foreground tracking-tight">Diskon & Promo</h2>
-          <p className="text-sm text-muted-foreground mt-1">Kelola event diskon berdasarkan jadwal dan target produk</p>
-        </div>
-        <Button className="bg-orange-500 hover:bg-orange-600" onClick={openAddDialog}>
-          <Plus className="w-4 h-4 mr-2" /> Tambah Diskon
-        </Button>
-      </div>
+    <div className="p-6 md:p-8 space-y-6 overflow-y-auto h-full">
+      <PageHeader
+        title="Diskon & Promo"
+        description="Kelola event diskon berdasarkan jadwal dan target produk"
+        icon={Percent}
+        actions={
+          <Button onClick={openAddDialog}>
+            <Plus className="w-4 h-4 mr-2" /> Tambah Diskon
+          </Button>
+        }
+      />
 
-      <Card>
+      <Card className="rounded-2xl ring-1 ring-foreground/10">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
@@ -178,8 +182,12 @@ export function DiscountsModule() {
             <TableBody>
               {discounts.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                    Belum ada diskon. Klik <strong>Tambah Diskon</strong> untuk membuat.
+                  <TableCell colSpan={7} className="p-0">
+                    <EmptyState
+                      icon={Percent}
+                      title="Belum ada diskon"
+                      description="Klik Tambah Diskon untuk membuat event diskon pertama Anda."
+                    />
                   </TableCell>
                 </TableRow>
               )}
@@ -187,7 +195,7 @@ export function DiscountsModule() {
                 <TableRow key={d.id} className={!d.isActive ? 'opacity-60' : ''}>
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-2">
-                      <Tag className="w-4 h-4 text-orange-500" />
+                      <Tag className="w-4 h-4 text-brand" />
                       {d.name}
                     </div>
                     {d.description && <p className="text-xs text-muted-foreground mt-0.5">{d.description}</p>}
@@ -213,20 +221,20 @@ export function DiscountsModule() {
                   </TableCell>
                   <TableCell>
                     {isActiveNow(d) ? (
-                      <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 text-xs">Aktif</Badge>
+                      <Badge className="bg-success/12 text-success text-xs">Aktif</Badge>
                     ) : d.isActive ? (
                       <Badge variant="secondary" className="text-xs">Terjadwal</Badge>
                     ) : (
-                      <Badge variant="outline" className="text-xs text-muted-foreground">Nonaktif</Badge>
+                      <Badge className="bg-muted text-muted-foreground text-xs">Nonaktif</Badge>
                     )}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
-                      <Button variant="ghost" size="icon" onClick={() => openEditDialog(d)}>
-                        <Edit className="w-4 h-4 text-blue-500" />
+                      <Button variant="ghost" size="icon" aria-label={`Edit diskon ${d.name}`} onClick={() => openEditDialog(d)}>
+                        <Edit className="w-4 h-4 text-info" />
                       </Button>
-                      <Button variant="ghost" size="icon" onClick={() => setDiscountToDelete(d)}>
-                        <Trash2 className="w-4 h-4 text-red-500" />
+                      <Button variant="ghost" size="icon" aria-label={`Hapus diskon ${d.name}`} onClick={() => setDiscountToDelete(d)}>
+                        <Trash2 className="w-4 h-4 text-destructive" />
                       </Button>
                     </div>
                   </TableCell>
@@ -254,7 +262,7 @@ export function DiscountsModule() {
             </div>
             <div className="space-y-2">
               <Label>Tipe Diskon</Label>
-              <Select value={current.type} onValueChange={v => setCurrent({ ...current, type: v })}>
+              <Select value={current.type} onValueChange={v => setCurrent({ ...current, type: v ?? '' })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="percentage">Persentase (%)</SelectItem>
@@ -301,10 +309,12 @@ export function DiscountsModule() {
             <div className="space-y-2 flex items-end pb-1">
               <div className="flex items-center space-x-3">
                 <Switch
+                  id="discount-active"
+                  aria-label="Aktif"
                   checked={current.isActive}
                   onCheckedChange={v => setCurrent({ ...current, isActive: v })}
                 />
-                <Label>Aktif</Label>
+                <Label htmlFor="discount-active">Aktif</Label>
               </div>
             </div>
             <div className="space-y-2 col-span-2">
@@ -368,7 +378,7 @@ export function DiscountsModule() {
                   <Badge
                     key={cat}
                     variant={current.categoryFilter.includes(cat) ? 'default' : 'outline'}
-                    className={`cursor-pointer ${current.categoryFilter.includes(cat) ? 'bg-orange-500 hover:bg-orange-600' : 'hover:bg-muted'}`}
+                    className={`cursor-pointer ${current.categoryFilter.includes(cat) ? 'bg-brand text-brand-foreground hover:bg-brand/90' : 'hover:bg-muted'}`}
                     onClick={() => toggleCategory(cat)}
                   >
                     {cat}
@@ -380,7 +390,7 @@ export function DiscountsModule() {
               </div>
             </div>
 
-            <Button onClick={handleSave} className="w-full bg-orange-500 hover:bg-orange-600 col-span-2 mt-2">
+            <Button onClick={handleSave} className="w-full col-span-2 mt-2">
               <Percent className="w-4 h-4 mr-2" />
               {isEditMode ? 'Simpan Perubahan' : 'Simpan Diskon'}
             </Button>
@@ -389,21 +399,19 @@ export function DiscountsModule() {
       </Dialog>
 
       {/* Delete Confirmation */}
-      <Dialog open={!!discountToDelete} onOpenChange={(open) => !open && setDiscountToDelete(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Hapus Diskon</DialogTitle>
-          </DialogHeader>
-          <div className="py-4">
-            <p>Apakah Anda yakin ingin menghapus diskon <strong>{discountToDelete?.name}</strong>?</p>
-            <p className="text-sm text-muted-foreground mt-2">Tindakan ini tidak dapat dibatalkan.</p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDiscountToDelete(null)}>Batal</Button>
-            <Button variant="destructive" onClick={handleDelete}>Hapus</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={!!discountToDelete}
+        onOpenChange={(open) => !open && setDiscountToDelete(null)}
+        variant="destructive"
+        title="Hapus Diskon"
+        description={
+          <>
+            Apakah Anda yakin ingin menghapus diskon <strong>{discountToDelete?.name}</strong>? Tindakan ini tidak dapat dibatalkan.
+          </>
+        }
+        confirmLabel="Hapus"
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }

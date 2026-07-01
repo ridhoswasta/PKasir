@@ -5,36 +5,37 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Coffee, ShieldCheck, Briefcase, ShoppingCart, ArrowLeft, Eye, EyeOff, Loader2, Maximize, Minimize } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useAuth, type Role } from '../services/auth';
+// Issue #12: use shared fullscreen hook instead of duplicated logic
+import { useFullscreen } from '../services/useFullscreen';
 
 const ROLES: { id: Role; label: string; sublabel: string; icon: any; color: string; bg: string; border: string; hoverBg: string; hoverBorder: string }[] = [
   {
     id: 'admin', label: 'Admin', sublabel: 'Akses penuh & kelola pengguna',
     icon: ShieldCheck,
-    color: 'text-red-600 dark:text-red-400',
-    bg: 'bg-red-50 dark:bg-red-950/30',
-    border: 'border-red-200 dark:border-red-800/40',
-    hoverBg: 'hover:bg-red-100 dark:hover:bg-red-950/50',
-    hoverBorder: 'hover:border-red-400 dark:hover:border-red-700',
+    color: 'text-destructive',
+    bg: 'bg-destructive/10',
+    border: 'border-destructive/30',
+    hoverBg: 'hover:bg-destructive/15',
+    hoverBorder: 'hover:border-destructive/50',
   },
   {
     id: 'manager', label: 'Manager', sublabel: 'Laporan, inventaris & operasional',
     icon: Briefcase,
-    color: 'text-blue-600 dark:text-blue-400',
-    bg: 'bg-blue-50 dark:bg-blue-950/30',
-    border: 'border-blue-200 dark:border-blue-800/40',
-    hoverBg: 'hover:bg-blue-100 dark:hover:bg-blue-950/50',
-    hoverBorder: 'hover:border-blue-400 dark:hover:border-blue-700',
+    color: 'text-info',
+    bg: 'bg-info/10',
+    border: 'border-info/30',
+    hoverBg: 'hover:bg-info/15',
+    hoverBorder: 'hover:border-info/50',
   },
   {
     id: 'cashier', label: 'Kasir', sublabel: 'Point of Sale',
     icon: ShoppingCart,
-    color: 'text-emerald-600 dark:text-emerald-400',
-    bg: 'bg-emerald-50 dark:bg-emerald-950/30',
-    border: 'border-emerald-200 dark:border-emerald-800/40',
-    hoverBg: 'hover:bg-emerald-100 dark:hover:bg-emerald-950/50',
-    hoverBorder: 'hover:border-emerald-400 dark:hover:border-emerald-700',
+    color: 'text-success',
+    bg: 'bg-success/10',
+    border: 'border-success/30',
+    hoverBg: 'hover:bg-success/15',
+    hoverBorder: 'hover:border-success/50',
   },
 ];
 
@@ -46,25 +47,8 @@ export function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [isFullScreen, setIsFullScreen] = useState(false);
-  const appWindow = getCurrentWindow();
-
-  React.useEffect(() => {
-    appWindow.isFullscreen().then(setIsFullScreen);
-    let unlisten: (() => void) | undefined;
-    appWindow.onResized(async () => {
-      setIsFullScreen(await appWindow.isFullscreen());
-    }).then((fn) => { unlisten = fn; });
-    return () => { unlisten?.(); };
-  }, []);
-
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') appWindow.isFullscreen().then((fs) => { if (fs) appWindow.setFullscreen(false); });
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  // Issue #12: replace duplicated fullscreen logic with shared hook
+  const { isFullScreen, toggleFullScreen } = useFullscreen();
 
   const handleBack = () => {
     setSelectedRole(null);
@@ -91,15 +75,7 @@ export function LoginScreen() {
     <div className="absolute inset-0 z-[200] flex flex-col items-center justify-center bg-background overflow-auto">
       {/* Full Screen toggle — matches Layout header style */}
       <button
-        onClick={async () => {
-          const fs = await appWindow.isFullscreen();
-          if (!fs) {
-            if (await appWindow.isMaximized()) await appWindow.unmaximize();
-            await appWindow.setFullscreen(true);
-          } else {
-            await appWindow.setFullscreen(false);
-          }
-        }}
+        onClick={toggleFullScreen}
         className={cn(
           "absolute top-5 right-5 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
           isFullScreen
@@ -119,8 +95,8 @@ export function LoginScreen() {
       <div className="relative z-10 w-full max-w-xl px-6 py-10 flex flex-col items-center">
         {/* Logo + Brand */}
         <div className="flex flex-col items-center mb-10">
-          <div className="bg-orange-500 rounded-2xl p-4 shadow-lg shadow-orange-500/20 mb-4">
-            <Coffee className="w-10 h-10 text-white" strokeWidth={1.8} />
+          <div className="bg-brand rounded-2xl p-4 shadow-lg shadow-brand/20 mb-4">
+            <Coffee className="w-10 h-10 text-brand-foreground" strokeWidth={1.8} />
           </div>
           <h1 className="text-3xl font-extrabold text-foreground tracking-tight">PKasir</h1>
           <p className="text-muted-foreground text-sm mt-1">Point of Sale System</p>
@@ -152,9 +128,7 @@ export function LoginScreen() {
                 );
               })}
             </div>
-            <p className="text-center text-muted-foreground text-xs mt-4">
-              Password default: <code className="bg-muted text-foreground px-1.5 py-0.5 rounded text-xs">000000</code>
-            </p>
+            {/* Issue #3: removed default password hint — security risk if terminal is visible to customers */}
           </div>
         ) : (
           /* ====== Login Form ====== */
@@ -223,7 +197,7 @@ export function LoginScreen() {
                   <Button
                     type="submit"
                     disabled={loading || !password || (selectedRole !== 'admin' && !username)}
-                    className="w-full h-11 bg-orange-500 hover:bg-orange-600 text-white font-semibold"
+                    className="w-full h-11 bg-brand hover:bg-brand/90 text-brand-foreground font-semibold"
                   >
                     {loading ? (
                       <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Memproses...</>

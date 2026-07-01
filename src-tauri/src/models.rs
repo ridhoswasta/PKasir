@@ -15,6 +15,10 @@ pub struct Product {
     pub price: Option<f64>,
     pub stock: Option<i64>,
     pub variants: serde_json::Value, // parsed JSON array
+    // Inventory add-ons (opt-in, default off — do not affect base stock flow)
+    pub track_batches: Option<i64>,
+    pub supplier_id: Option<String>,
+    pub reorder_point: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,6 +33,9 @@ pub struct ProductInput {
     pub price: Option<f64>,
     pub stock: Option<i64>,
     pub variants: Option<serde_json::Value>,
+    pub track_batches: Option<i64>,
+    pub supplier_id: Option<String>,
+    pub reorder_point: Option<i64>,
 }
 
 // ── Discounts ────────────────────────────────────────────
@@ -197,6 +204,30 @@ pub struct Settings {
     pub qris_image: Option<String>,
     pub display_photos: Vec<String>,
     pub display_slideshow_interval: Option<i64>,
+    // Loyalty
+    pub loyalty_enabled: Option<i64>,
+    pub redeem_rate: Option<f64>,
+    pub min_redeem_points: Option<f64>,
+    // SMTP email alerts
+    pub email_alert_enabled: Option<i64>,
+    pub smtp_host: Option<String>,
+    pub smtp_port: Option<i64>,
+    pub smtp_use_tls: Option<i64>,
+    pub smtp_from: Option<String>,
+    pub smtp_username: Option<String>,
+    pub smtp_password: Option<String>,
+    pub email_recipient: Option<String>,
+    pub low_stock_threshold: Option<i64>,
+    // Canonical shop identity
+    pub shop_name: Option<String>,
+    pub shop_address: Option<String>,
+    // Dynamic QRIS
+    pub qris_enabled: Option<i64>,
+    pub qris_static: Option<String>,
+    pub qris_merchant_name: Option<String>,
+    // QRIS v2 image-upload flow
+    pub qris_merchant_city: Option<String>,
+    pub qris_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -232,6 +263,29 @@ pub struct SettingsInput {
     pub qris_image: Option<String>,
     pub display_photos: Option<Vec<String>>,
     pub display_slideshow_interval: Option<i64>,
+    // Loyalty
+    pub loyalty_enabled: Option<i64>,
+    pub redeem_rate: Option<f64>,
+    pub min_redeem_points: Option<f64>,
+    // SMTP email alerts
+    pub email_alert_enabled: Option<i64>,
+    pub smtp_host: Option<String>,
+    pub smtp_port: Option<i64>,
+    pub smtp_use_tls: Option<i64>,
+    pub smtp_from: Option<String>,
+    pub smtp_username: Option<String>,
+    pub smtp_password: Option<String>,
+    pub email_recipient: Option<String>,
+    pub low_stock_threshold: Option<i64>,
+    pub shop_name: Option<String>,
+    pub shop_address: Option<String>,
+    // Dynamic QRIS
+    pub qris_enabled: Option<i64>,
+    pub qris_static: Option<String>,
+    pub qris_merchant_name: Option<String>,
+    // QRIS v2 image-upload flow
+    pub qris_merchant_city: Option<String>,
+    pub qris_mode: Option<String>,
 }
 
 // ── Users ────────────────────────────────────────────────
@@ -365,4 +419,162 @@ pub struct PrintItem {
     pub price: f64,
     pub variant_name: Option<String>,
     pub note: Option<String>,
+}
+
+// ── Suppliers ────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Supplier {
+    pub id: String,
+    pub name: Option<String>,
+    pub contact_person: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub address: Option<String>,
+    pub note: Option<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SupplierInput {
+    pub name: String,
+    pub contact_person: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub address: Option<String>,
+    pub note: Option<String>,
+}
+
+// ── Product Batches (expiry / lot tracking) ──────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductBatch {
+    pub id: String,
+    pub product_id: String,
+    pub product_name: Option<String>,
+    pub batch_no: Option<String>,
+    pub expiry_date: Option<String>,
+    pub qty: i64,
+    pub initial_qty: i64,
+    pub cost_price: Option<f64>,
+    pub supplier_id: Option<String>,
+    pub received_date: Option<String>,
+    pub note: Option<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductBatchInput {
+    pub product_id: String,
+    pub batch_no: Option<String>,
+    pub expiry_date: Option<String>,
+    pub qty: i64,
+    pub cost_price: Option<f64>,
+    pub supplier_id: Option<String>,
+    pub received_date: Option<String>,
+    pub note: Option<String>,
+}
+
+// ── Stock Movements (ledger) ─────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StockMovement {
+    pub id: String,
+    pub product_id: String,
+    pub product_name: Option<String>,
+    pub batch_id: Option<String>,
+    pub r#type: String,
+    pub quantity: i64,
+    pub balance_after: Option<i64>,
+    pub reference: Option<String>,
+    pub note: Option<String>,
+    pub user: Option<String>,
+    pub date: String,
+}
+
+// ── Purchase Orders ──────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PurchaseOrder {
+    pub id: String,
+    pub supplier_id: Option<String>,
+    pub supplier_name: Option<String>,
+    pub status: String,
+    pub order_date: Option<String>,
+    pub expected_date: Option<String>,
+    pub received_date: Option<String>,
+    pub note: Option<String>,
+    pub total: Option<f64>,
+    pub items: serde_json::Value,
+    pub created_at: Option<String>,
+}
+
+// ── Recipe Costing ───────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Ingredient {
+    pub id: i64,
+    pub name: String,
+    pub unit: String,
+    pub cost_per_unit: f64,
+    pub stock_qty: f64,
+    pub low_stock_threshold: f64,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IngredientInput {
+    pub name: String,
+    pub unit: String,
+    pub cost_per_unit: f64,
+    pub stock_qty: Option<f64>,
+    pub low_stock_threshold: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RecipeItem {
+    pub id: i64,
+    pub product_id: String,
+    pub ingredient_id: i64,
+    pub ingredient_name: String,
+    pub unit: String,
+    pub quantity: f64,
+    pub cost_per_unit: f64,
+    pub subtotal: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecipeItemInput {
+    pub ingredient_id: i64,
+    pub quantity: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleItem {
+    pub product_id: String,
+    pub quantity: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PurchaseOrderInput {
+    pub supplier_id: Option<String>,
+    pub supplier_name: Option<String>,
+    pub status: Option<String>,
+    pub order_date: Option<String>,
+    pub expected_date: Option<String>,
+    pub note: Option<String>,
+    pub items: serde_json::Value,
 }

@@ -147,7 +147,7 @@ export function ProfileDialog({ open, onOpenChange }: ProfileDialogProps) {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="text-red-500 hover:text-red-600"
+                    className="text-destructive hover:text-destructive/90"
                     onClick={handleRemoveAvatar}
                     disabled={saving}
                   >

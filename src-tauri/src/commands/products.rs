@@ -10,7 +10,7 @@ fn now_id() -> String {
 pub fn get_products(db: State<'_, AppDb>) -> Result<Vec<Product>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, name, description, image, category, unit, costPrice, price, stock, variants FROM products")
+        .prepare("SELECT id, name, description, image, category, unit, costPrice, price, stock, variants, trackBatches, supplierId, reorderPoint FROM products")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -28,6 +28,9 @@ pub fn get_products(db: State<'_, AppDb>) -> Result<Vec<Product>, String> {
                 price: row.get(7)?,
                 stock: row.get(8)?,
                 variants,
+                track_batches: row.get(10).ok(),
+                supplier_id: row.get(11).ok(),
+                reorder_point: row.get(12).ok(),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -43,10 +46,14 @@ pub fn create_product(db: State<'_, AppDb>, product: ProductInput) -> Result<Pro
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let id = now_id();
     let variants_json = serde_json::to_string(&product.variants.unwrap_or(serde_json::json!([]))).unwrap_or_else(|_| "[]".into());
+    let track_batches = product.track_batches.unwrap_or(0);
+    let reorder_point = product.reorder_point.unwrap_or(0);
     conn.execute(
-        "INSERT INTO products (id, name, description, image, category, unit, costPrice, price, stock, variants) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-        rusqlite::params![id, product.name, product.description, product.image, product.category, product.unit, product.cost_price, product.price, product.stock, variants_json],
+        "INSERT INTO products (id, name, description, image, category, unit, costPrice, price, stock, variants, trackBatches, supplierId, reorderPoint) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+        rusqlite::params![id, product.name, product.description, product.image, product.category, product.unit, product.cost_price, product.price, product.stock, variants_json, track_batches, product.supplier_id, reorder_point],
     ).map_err(|e| e.to_string())?;
+    // If created with batch tracking on + opening stock, seed an opening batch.
+    let _ = crate::commands::inventory::ensure_opening_batch(&conn, &id);
     Ok(Product {
         id,
         name: product.name,
@@ -58,6 +65,9 @@ pub fn create_product(db: State<'_, AppDb>, product: ProductInput) -> Result<Pro
         price: product.price,
         stock: product.stock,
         variants: serde_json::from_str(&variants_json).unwrap_or(serde_json::json!([])),
+        track_batches: Some(track_batches),
+        supplier_id: product.supplier_id,
+        reorder_point: Some(reorder_point),
     })
 }
 
@@ -65,10 +75,14 @@ pub fn create_product(db: State<'_, AppDb>, product: ProductInput) -> Result<Pro
 pub fn update_product(db: State<'_, AppDb>, id: String, product: ProductInput) -> Result<Product, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let variants_json = serde_json::to_string(&product.variants.unwrap_or(serde_json::json!([]))).unwrap_or_else(|_| "[]".into());
+    let track_batches = product.track_batches.unwrap_or(0);
+    let reorder_point = product.reorder_point.unwrap_or(0);
     conn.execute(
-        "UPDATE products SET name=?1, description=?2, image=?3, category=?4, unit=?5, costPrice=?6, price=?7, stock=?8, variants=?9 WHERE id=?10",
-        rusqlite::params![product.name, product.description, product.image, product.category, product.unit, product.cost_price, product.price, product.stock, variants_json, id],
+        "UPDATE products SET name=?1, description=?2, image=?3, category=?4, unit=?5, costPrice=?6, price=?7, stock=?8, variants=?9, trackBatches=?10, supplierId=?11, reorderPoint=?12 WHERE id=?13",
+        rusqlite::params![product.name, product.description, product.image, product.category, product.unit, product.cost_price, product.price, product.stock, variants_json, track_batches, product.supplier_id, reorder_point, id],
     ).map_err(|e| e.to_string())?;
+    // If batch tracking was just enabled on a product that has stock, seed an opening batch.
+    let _ = crate::commands::inventory::ensure_opening_batch(&conn, &id);
     Ok(Product {
         id,
         name: product.name,
@@ -80,6 +94,9 @@ pub fn update_product(db: State<'_, AppDb>, id: String, product: ProductInput) -
         price: product.price,
         stock: product.stock,
         variants: serde_json::from_str(&variants_json).unwrap_or(serde_json::json!([])),
+        track_batches: Some(track_batches),
+        supplier_id: product.supplier_id,
+        reorder_point: Some(reorder_point),
     })
 }
 

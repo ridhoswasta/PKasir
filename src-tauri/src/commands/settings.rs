@@ -15,7 +15,7 @@ fn split_csv(s: &Option<String>) -> Vec<String> {
 pub fn get_settings(db: State<'_, AppDb>) -> Result<Settings, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     conn.query_row(
-        "SELECT taxRate, serviceCharge, printerName, paperWidth, receiptHeader, receiptFooter, logo, logoWidth, logoHeight, productCategories, flowCategories, productUnits, pointMultiplier, printerType, printerIp, printerPort, printerCharset, printerOpenDrawer, tauriPrinterName, tauriPrinterInterface, tables, cartSound, virtualKeyboard, backupPath, autoBackupEnabled, autoBackupPath, lastBackupAt, autoBackupIntervalSeconds, qrisImage, displayPhotos, displaySlideshowInterval FROM settings WHERE id='default'",
+        "SELECT taxRate, serviceCharge, printerName, paperWidth, receiptHeader, receiptFooter, logo, logoWidth, logoHeight, productCategories, flowCategories, productUnits, pointMultiplier, printerType, printerIp, printerPort, printerCharset, printerOpenDrawer, tauriPrinterName, tauriPrinterInterface, tables, cartSound, virtualKeyboard, backupPath, autoBackupEnabled, autoBackupPath, lastBackupAt, autoBackupIntervalSeconds, qrisImage, displayPhotos, displaySlideshowInterval, loyaltyEnabled, redeemRate, minRedeemPoints, emailAlertEnabled, smtpHost, smtpPort, smtpUseTls, smtpFrom, smtpUsername, smtpPassword, emailRecipient, lowStockThreshold, shopName, shopAddress, qrisEnabled, qrisStatic, qrisMerchantName, qrisMerchantCity, qrisMode FROM settings WHERE id='default'",
         [],
         |row| {
             let product_categories: Option<String> = row.get(9)?;
@@ -61,6 +61,25 @@ pub fn get_settings(db: State<'_, AppDb>) -> Result<Settings, String> {
                 qris_image: row.get(28)?,
                 display_photos,
                 display_slideshow_interval: row.get(30)?,
+                loyalty_enabled: row.get(31)?,
+                redeem_rate: row.get(32)?,
+                min_redeem_points: row.get(33)?,
+                email_alert_enabled: row.get(34)?,
+                smtp_host: row.get(35)?,
+                smtp_port: row.get(36)?,
+                smtp_use_tls: row.get(37)?,
+                smtp_from: row.get(38)?,
+                smtp_username: row.get(39)?,
+                smtp_password: row.get(40)?,
+                email_recipient: row.get(41)?,
+                low_stock_threshold: row.get(42)?,
+                shop_name: row.get(43)?,
+                shop_address: row.get(44)?,
+                qris_enabled: row.get(45)?,
+                qris_static: row.get(46)?,
+                qris_merchant_name: row.get(47)?,
+                qris_merchant_city: row.get(48)?,
+                qris_mode: row.get(49)?,
             })
         },
     )
@@ -79,7 +98,7 @@ pub fn update_settings(db: State<'_, AppDb>, settings: SettingsInput) -> Result<
         .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into()))
         .unwrap_or_else(|| "[]".into());
     conn.execute(
-        "UPDATE settings SET taxRate=?1, serviceCharge=?2, printerName=?3, paperWidth=?4, receiptHeader=?5, receiptFooter=?6, logo=?7, logoWidth=?8, logoHeight=?9, productCategories=?10, flowCategories=?11, productUnits=?12, pointMultiplier=?13, printerType=?14, printerIp=?15, printerPort=?16, printerCharset=?17, printerOpenDrawer=?18, tauriPrinterName=?19, tauriPrinterInterface=?20, tables=?21, cartSound=?22, virtualKeyboard=?23, backupPath=?24, autoBackupEnabled=?25, autoBackupPath=?26, autoBackupIntervalSeconds=?27, qrisImage=?28, displayPhotos=?29, displaySlideshowInterval=?30 WHERE id='default'",
+        "UPDATE settings SET taxRate=?1, serviceCharge=?2, printerName=?3, paperWidth=?4, receiptHeader=?5, receiptFooter=?6, logo=?7, logoWidth=?8, logoHeight=?9, productCategories=?10, flowCategories=?11, productUnits=?12, pointMultiplier=?13, printerType=?14, printerIp=?15, printerPort=?16, printerCharset=?17, printerOpenDrawer=?18, tauriPrinterName=?19, tauriPrinterInterface=?20, tables=?21, cartSound=?22, virtualKeyboard=?23, backupPath=?24, autoBackupEnabled=?25, autoBackupPath=?26, autoBackupIntervalSeconds=?27, qrisImage=?28, displayPhotos=?29, displaySlideshowInterval=?30, loyaltyEnabled=?31, redeemRate=?32, minRedeemPoints=?33, emailAlertEnabled=?34, smtpHost=?35, smtpPort=?36, smtpUseTls=?37, smtpFrom=?38, smtpUsername=?39, smtpPassword=?40, emailRecipient=?41, lowStockThreshold=?42, shopName=?43, shopAddress=?44, qrisEnabled=?45, qrisStatic=?46, qrisMerchantName=?47, qrisMerchantCity=?48, qrisMode=?49 WHERE id='default'",
         rusqlite::params![
             settings.tax_rate,
             settings.service_charge,
@@ -111,6 +130,25 @@ pub fn update_settings(db: State<'_, AppDb>, settings: SettingsInput) -> Result<
             settings.qris_image.as_deref().unwrap_or(""),
             display_photos_json,
             settings.display_slideshow_interval.unwrap_or(5),
+            settings.loyalty_enabled.unwrap_or(0),
+            settings.redeem_rate.unwrap_or(100.0),
+            settings.min_redeem_points.unwrap_or(100.0),
+            settings.email_alert_enabled.unwrap_or(0),
+            settings.smtp_host.as_deref().unwrap_or(""),
+            settings.smtp_port.unwrap_or(587),
+            settings.smtp_use_tls.unwrap_or(1),
+            settings.smtp_from.as_deref().unwrap_or(""),
+            settings.smtp_username.as_deref().unwrap_or(""),
+            settings.smtp_password.as_deref().unwrap_or(""),
+            settings.email_recipient.as_deref().unwrap_or(""),
+            settings.low_stock_threshold.unwrap_or(5),
+            settings.shop_name.as_deref().unwrap_or(""),
+            settings.shop_address.as_deref().unwrap_or(""),
+            settings.qris_enabled.unwrap_or(0),
+            settings.qris_static.as_deref().unwrap_or(""),
+            settings.qris_merchant_name.as_deref().unwrap_or(""),
+            settings.qris_merchant_city.as_deref().unwrap_or(""),
+            settings.qris_mode.as_deref().unwrap_or("static"),
         ],
     ).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({ "success": true }))

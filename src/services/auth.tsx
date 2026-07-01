@@ -77,8 +77,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 // Role → allowed tabs
 export const ROLE_TABS: Record<Role, string[]> = {
   cashier: ['pos'],
-  manager: ['dashboard', 'pos', 'transactions', 'inventory', 'products', 'reports', 'money', 'customers', 'discounts'],
-  admin: ['dashboard', 'pos', 'transactions', 'inventory', 'products', 'reports', 'money', 'customers', 'discounts', 'settings', 'users'],
+  manager: ['dashboard', 'pos', 'transactions', 'inventory', 'products', 'reports', 'money', 'customers', 'discounts', 'suppliers', 'purchases', 'ingredients'],
+  admin: ['dashboard', 'pos', 'transactions', 'inventory', 'products', 'reports', 'money', 'customers', 'discounts', 'suppliers', 'purchases', 'ingredients', 'settings', 'users'],
 };
 
 export const ROLE_DEFAULT_TAB: Record<Role, string> = {

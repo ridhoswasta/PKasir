@@ -1,16 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Layout } from './components/Layout';
-import { DashboardModule } from './components/DashboardModule';
-import { POSModule } from './components/POSModule';
-import { InventoryModule } from './components/InventoryModule';
-import { ProductsModule } from './components/ProductsModule';
-import { ReportsModule } from './components/ReportsModule';
-import { MoneyFlowModule } from './components/MoneyFlowModule';
-import { CustomersModule } from './components/CustomersModule';
-import { SettingsModule } from './components/SettingsModule';
-import { TransactionHistoryModule } from './components/TransactionHistoryModule';
-import { UserManagementModule } from './components/UserManagementModule';
-import { DiscountsModule } from './components/DiscountsModule';
 import { SplashScreen } from './components/SplashScreen';
 import { LoginScreen } from './components/LoginScreen';
 import { WindowTitlebar } from './components/WindowTitlebar';
@@ -19,6 +8,33 @@ import { AuthProvider, useAuth, ROLE_TABS, ROLE_DEFAULT_TAB } from './services/a
 import { ThemeProvider, useTheme } from './services/theme';
 import { invoke } from '@tauri-apps/api/core';
 import { Toaster } from 'sonner';
+import { Spinner } from '@/components/ui/spinner';
+
+// Feature modules are code-split so startup only parses the shell + the first
+// screen; heavy dependencies (e.g. recharts in Dashboard/Reports) load when
+// their tab is first opened.
+const DashboardModule = lazy(() => import('./components/DashboardModule').then((m) => ({ default: m.DashboardModule })));
+const POSModule = lazy(() => import('./components/POSModule').then((m) => ({ default: m.POSModule })));
+const InventoryModule = lazy(() => import('./components/InventoryModule').then((m) => ({ default: m.InventoryModule })));
+const ProductsModule = lazy(() => import('./components/ProductsModule').then((m) => ({ default: m.ProductsModule })));
+const ReportsModule = lazy(() => import('./components/ReportsModule').then((m) => ({ default: m.ReportsModule })));
+const MoneyFlowModule = lazy(() => import('./components/MoneyFlowModule').then((m) => ({ default: m.MoneyFlowModule })));
+const CustomersModule = lazy(() => import('./components/CustomersModule').then((m) => ({ default: m.CustomersModule })));
+const SettingsModule = lazy(() => import('./components/SettingsModule').then((m) => ({ default: m.SettingsModule })));
+const TransactionHistoryModule = lazy(() => import('./components/TransactionHistoryModule').then((m) => ({ default: m.TransactionHistoryModule })));
+const UserManagementModule = lazy(() => import('./components/UserManagementModule').then((m) => ({ default: m.UserManagementModule })));
+const DiscountsModule = lazy(() => import('./components/DiscountsModule').then((m) => ({ default: m.DiscountsModule })));
+const SuppliersModule = lazy(() => import('./components/SuppliersModule').then((m) => ({ default: m.SuppliersModule })));
+const PurchaseOrdersModule = lazy(() => import('./components/PurchaseOrdersModule').then((m) => ({ default: m.PurchaseOrdersModule })));
+const IngredientsModule = lazy(() => import('./components/IngredientsModule').then((m) => ({ default: m.IngredientsModule })));
+
+function ModuleFallback() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <Spinner className="size-6" />
+    </div>
+  );
+}
 
 function ThemedToaster() {
   const { resolved } = useTheme();
@@ -87,6 +103,9 @@ function AppInner() {
       case 'reports': return <ReportsModule />;
       case 'money': return <MoneyFlowModule />;
       case 'customers': return <CustomersModule />;
+      case 'suppliers': return <SuppliersModule />;
+      case 'purchases': return <PurchaseOrdersModule />;
+      case 'ingredients': return <IngredientsModule />;
       case 'settings': return <SettingsModule />;
       case 'users': return <UserManagementModule />;
       case 'discounts': return <DiscountsModule />;
@@ -103,7 +122,7 @@ function AppInner() {
           <LoginScreen />
         ) : (
           <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
-            {renderContent()}
+            <Suspense fallback={<ModuleFallback />}>{renderContent()}</Suspense>
           </Layout>
         )}
         <ThemedToaster />
