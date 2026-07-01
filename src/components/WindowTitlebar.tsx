@@ -1,7 +1,17 @@
 import { useState, useEffect } from 'react';
-import { getCurrentWindow, type ResizeDirection } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Minus, X } from 'lucide-react';
 import appIconUrl from '../../src-tauri/icons/icon.png';
+
+type ResizeDirection =
+  | 'East'
+  | 'North'
+  | 'NorthEast'
+  | 'NorthWest'
+  | 'South'
+  | 'SouthEast'
+  | 'SouthWest'
+  | 'West';
 
 const resizeHandles: Array<{
   direction: ResizeDirection;
