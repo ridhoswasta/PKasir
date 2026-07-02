@@ -257,7 +257,7 @@ Area utama backend:
 
 Install dulu:
 
-1. Node.js 20.19+ atau 22.12+ direkomendasikan untuk versi Vite saat ini
+1. Node.js 24+ direkomendasikan dan digunakan oleh workflow GitHub Actions
 2. Rust melalui [rustup.rs](https://rustup.rs/)
 3. Dependency sistem Tauri sesuai OS
 
