@@ -5,7 +5,15 @@ PKasir adalah aplikasi Point of Sale (POS) desktop yang dirancang untuk bekerja 
 
 #MERDEKAdariBIAYALANGGANAN
 
-# Default password : 000000
+## Default password 
+000000
+
+## Sreenshots 
+### Layar Kasir
+<img width="1919" height="1052" alt="image" src="https://github.com/user-attachments/assets/64694c30-885c-4045-bb58-eaa93a3d01ca" />
+### Layar Customer
+<img width="1361" height="768" alt="image" src="https://github.com/user-attachments/assets/97c85943-367c-48b4-bc7a-ae67ea6bf965" />
+
 
 ## Kenapa PKasir
 
