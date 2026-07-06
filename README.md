@@ -5,6 +5,8 @@ PKasir adalah aplikasi Point of Sale (POS) desktop yang dirancang untuk bekerja 
 
 #MERDEKAdariBIAYALANGGANAN
 
+# Default password : 000000
+
 ## Kenapa PKasir
 
 - POS desktop offline dengan data SQLite lokal
